@@ -1,0 +1,66 @@
+[project]
+name = "invoice-controller"
+version = "0.1.0"
+description = "Extract German vendor offers and invoices into a standardised LibreOffice Kontrollmappe for EEW Modul 4 close-out."
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "anthropic>=0.106.0",
+    "babel>=2.18.0",
+    "google-genai>=2.8.0",
+    "odfdo>=3.22.8",
+    "openai>=2.41.0",
+    "openpyxl>=3.1.5",
+    "pdfplumber>=0.11.9",
+    "pydantic>=2.13.4",
+    "pydantic-ai>=1.106.0",
+    "pypdf>=6.13.0",
+    "pypdfium2>=4.30.0",
+    "python-dotenv>=1.2.2",
+    "typer>=0.26.7",
+]
+
+[project.optional-dependencies]
+# Local (on-prem) OCR tier for scanned PDFs. Optional: when absent, scans fall back to the
+# cloud vision-LLM path. Needs the system `tesseract` binary + a German language pack (`deu`).
+ocr = ["pytesseract>=0.3.13"]
+
+[project.scripts]
+invoice-controller = "invoice_controller.cli:app"
+
+[dependency-groups]
+dev = [
+    "mypy>=2.1.0",
+    "pytest>=9.0.3",
+    "ruff>=0.15.16",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/invoice_controller"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+files = ["src"]
+
+[[tool.mypy.overrides]]
+module = ["pypdfium2", "pytesseract"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "live: tests that hit the real LLM API (skipped unless --run-live is passed)",
+]

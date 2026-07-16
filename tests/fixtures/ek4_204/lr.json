@@ -1,0 +1,37 @@
+{
+  "header": {
+    "vendor_name": "L&R Kältetechnik GmbH & Co. KG",
+    "vendor_short": "L&R",
+    "offer_number": "AN230737-2.03",
+    "offer_date": "2024-03-11",
+    "customer_name": "WIROX Oberflächentechnik GmbH&Co.KG",
+    "title": "Kälteanlage"
+  },
+  "positions": [
+    {"pos": "1", "description": "Radial-Kühltürme KT-1.000-25-FU", "qty": "1", "unit": "Stück", "line_total_net": "130000.00", "kategorie": "investitionskosten"},
+    {"pos": "2", "description": "Kühlturmtank aus Kunststoff", "qty": "1", "unit": "Stück", "line_total_net": "16000.00", "kategorie": "investitionskosten"},
+    {"pos": "3", "description": "Kühlturmpumpen Grundfos", "qty": "2", "unit": "Stück", "line_total_net": "15000.00", "kategorie": "investitionskosten"},
+    {"pos": "4", "description": "Verbraucherpumpen Badkühlung", "qty": "2", "unit": "Stück", "line_total_net": "12000.00", "kategorie": "investitionskosten"},
+    {"pos": "5", "description": "Verbraucherpumpen Gleichrichterkühlung", "qty": "2", "unit": "Stück", "line_total_net": "14000.00", "kategorie": "investitionskosten"},
+    {"pos": "6", "description": "Absalzautomatik mit Leitwertmessung", "qty": "1", "unit": "Stück", "line_total_net": "9000.00", "kategorie": "investitionskosten"},
+    {"pos": "7", "description": "Dosierstation Korrosionsschutz", "qty": "1", "unit": "Stück", "line_total_net": "5000.00", "kategorie": "investitionskosten"},
+    {"pos": "8", "description": "Dosierstation Biozid", "qty": "1", "unit": "Stück", "line_total_net": "4500.00", "kategorie": "investitionskosten"},
+    {"pos": "9", "description": "Schalt- und Regelschrank L&R Rückkühlanlage", "qty": "1", "unit": "Stück", "line_total_net": "6000.00", "kategorie": "investitionskosten"},
+    {"pos": "10", "description": "Richtpreis PVC-Verrohrung, Montage, Verkabelung", "qty": "1", "unit": "Richtpreis", "line_total_net": "16500.00", "kategorie": "nebenkosten", "kategorie_reason": "Montage/Verkabelung = Nebenkosten"},
+    {"pos": "11", "description": "Richtpreis Inbetriebnahme und Einweisung", "qty": "1", "unit": "Richtpreis", "line_total_net": "4500.00", "kategorie": "nebenkosten", "kategorie_reason": "Inbetriebnahme = Nebenkosten"},
+    {"pos": "12", "description": "Fernwartung REX 100 WAN", "qty": "1", "unit": "Stück", "line_total_net": "1500.00", "kategorie": "investitionskosten", "kategorie_reason": "Fernwartung Hardware = Inv per Ground Truth"},
+    {"pos": "13", "description": "Schnittstelle Profinet zur GLT inkl. Programmierung", "qty": "1", "unit": "Stück", "line_total_net": "4900.00", "kategorie": "investitionskosten", "kategorie_reason": "Schnittstelle = Inv per Ground Truth"},
+    {"pos": "14", "description": "Rücklauffilter im Tank integriert", "qty": "1", "unit": "Stück", "line_total_net": "18500.00", "kategorie": "investitionskosten"},
+    {"pos": "15", "description": "Automatisch rückspülbare Sandfilteranlage", "qty": "1", "unit": "Stück", "line_total_net": "7300.00", "kategorie": "investitionskosten"},
+    {"pos": "16", "description": "Plattenwärmetauscher / L&R Wärmetauscheranlagen Badkühlung", "qty": "2", "unit": "Stück", "line_total_net": "54500.00", "kategorie": "investitionskosten"},
+    {"pos": "17", "description": "FU-Drehzahlregelung Verbraucherpumpe Badkühlung", "qty": "2", "unit": "Stück", "line_total_net": "2900.00", "kategorie": "investitionskosten"},
+    {"pos": "18", "description": "FU-Drehzahlregelung Verbraucherpumpe Gleichrichterkühlung", "qty": "2", "unit": "Stück", "line_total_net": "2200.00", "kategorie": "investitionskosten"},
+    {"pos": "19", "description": "Doppel-Enthärtungsanlage für Endausbau", "qty": "1", "unit": "Stück", "line_total_net": "8500.00", "kategorie": "investitionskosten"}
+  ],
+  "totals": {
+    "nettosumme": "332800.00",
+    "mwst_pct": "19.00",
+    "endbetrag": "396032.00",
+    "sonderpreis": "295000.00"
+  }
+}
