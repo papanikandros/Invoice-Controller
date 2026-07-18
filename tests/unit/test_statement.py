@@ -25,14 +25,14 @@ from tests.ods_inspect import read_kostenaufstellung
 
 def _statement_header() -> OfferHeader:
     return OfferHeader(
-        vendor_name="Craemer GmbH",
-        vendor_short="Craemer",
+        vendor_name="Musterfirma GmbH",
+        vendor_short="Musterfirma",
         offer_number="Stellungnahme",
         offer_date=date(2026, 6, 23),
     )
 
 # A single page of synthetic statement text carrying the stub agent's fingerprint. The real
-# Craemer PDF is a scan (no text layer), so the unit path injects text instead of reading it.
+# statement PDF is a scan (no text layer), so the unit path injects text instead of reading it.
 _STATEMENT_PAGE = (
     "Bestätigung Materialverbrauch und Menge Mahlgutausschuss 2024\n"
     "Aktueller Einsatz von HDPE-Recyclat: 11.256 t/a\n"
@@ -62,10 +62,10 @@ def test_check_statement_is_not_applicable() -> None:
 @pytest.mark.parametrize(
     ("name", "expected"),
     [
-        ("7. Craemer Stellungnahme.pdf", DocumentKind.STATEMENT),
+        ("7. Musterfirma Stellungnahme.pdf", DocumentKind.STATEMENT),
         ("Kostenschätzung_2026.pdf", DocumentKind.STATEMENT),
-        ("Eigenerklärung Craemer.pdf", DocumentKind.STATEMENT),
-        ("2. Leistritz Angebot-Soll.pdf", None),
+        ("Eigenerklärung Musterfirma.pdf", DocumentKind.STATEMENT),
+        ("2. Musterlieferant Angebot-Soll.pdf", None),
         ("Angebot1253187.pdf", None),
     ],
 )
@@ -82,7 +82,7 @@ def test_statement_pipeline_via_filename(
     monkeypatch: pytest.MonkeyPatch,
     stub_agent_ek4_322_statement: Agent[None, ExtractedOffer],
 ) -> None:
-    path = Path("examples/EK4_322/7. Craemer Stellungnahme.pdf")
+    path = Path("x/7. Musterfirma Stellungnahme.pdf")
     offer = _run_pipeline(monkeypatch, path, stub_agent_ek4_322_statement)
 
     assert offer.kind is DocumentKind.STATEMENT
@@ -100,7 +100,7 @@ def test_filename_overrides_llm_offer_classification(monkeypatch: pytest.MonkeyP
     payload = load_fixture("ek4_322", "craemer_stellungnahme")
     payload = {**payload, "doc_type": "offer"}
     agent = make_fingerprint_agent({"Werksverrohrung": payload})
-    offer = _run_pipeline(monkeypatch, Path("x/7. Craemer Stellungnahme.pdf"), agent)
+    offer = _run_pipeline(monkeypatch, Path("x/7. Musterfirma Stellungnahme.pdf"), agent)
     assert offer.kind is DocumentKind.STATEMENT
 
 
@@ -136,7 +136,7 @@ def test_statement_renders_into_kostenaufstellung(
     tmp_path: Path,
 ) -> None:
     offer = _run_pipeline(
-        monkeypatch, Path("examples/EK4_322/7. Craemer Stellungnahme.pdf"), stub_agent_ek4_322_statement
+        monkeypatch, Path("x/7. Musterfirma Stellungnahme.pdf"), stub_agent_ek4_322_statement
     )
     out = tmp_path / "stmt.ods"
     write_kostenaufstellung([offer], out)

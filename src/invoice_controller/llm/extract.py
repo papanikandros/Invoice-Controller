@@ -9,7 +9,8 @@ from typing import Any, TypeVar
 from dotenv import load_dotenv
 from pydantic import BaseModel
 from pydantic_ai import Agent, BinaryContent
-from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
+from pydantic_ai.models import Model
 
 from invoice_controller.models import DocumentKind, OfferHeader, OfferTotals, Position
 
@@ -91,14 +92,26 @@ def get_agent() -> Agent[None, ExtractedOffer]:
     )
 
 
-def _resolve_model() -> str:
-    """Pick a provider+model by which API key is present. Preference order is OpenAI → Gemini → Anthropic.
+def _openrouter_key() -> str | None:
+    # The .env uses OPEN_ROUTER_API_KEY; accept the canonical OPENROUTER_API_KEY too.
+    return os.environ.get("OPEN_ROUTER_API_KEY") or os.environ.get("OPENROUTER_API_KEY")
 
-    Override the per-provider model via env vars: OPENAI_MODEL, GEMINI_MODEL, ANTHROPIC_MODEL.
-    Override the explicit provider via LLM_MODEL (e.g. "openai:gpt-5-mini")."""
+
+def _resolve_model() -> str | Model:
+    """Pick a provider+model. Preference: OpenRouter → OpenAI → Gemini → Anthropic.
+
+    OpenRouter is primary when its key is set; the model comes from OPENROUTER_MODEL.
+    Override the per-provider model via OPENROUTER_MODEL / OPENAI_MODEL / GEMINI_MODEL /
+    ANTHROPIC_MODEL. Override the whole provider via LLM_MODEL (e.g. "openai:gpt-5-mini")."""
     explicit = os.environ.get("LLM_MODEL")
     if explicit:
         return explicit
+    if or_key := _openrouter_key():
+        from pydantic_ai.models.openai import OpenAIChatModel
+        from pydantic_ai.providers.openrouter import OpenRouterProvider
+
+        model_name = os.environ.get("OPENROUTER_MODEL", "nvidia/nemotron-3-ultra-550b-a55b:free")
+        return OpenAIChatModel(model_name, provider=OpenRouterProvider(api_key=or_key))
     if os.environ.get("OPENAI_API_KEY"):
         return f"openai-chat:{os.environ.get('OPENAI_MODEL', 'gpt-5-mini')}"
     if os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"):
@@ -106,14 +119,17 @@ def _resolve_model() -> str:
     if os.environ.get("ANTHROPIC_API_KEY"):
         return f"anthropic:{os.environ.get('ANTHROPIC_MODEL', 'claude-haiku-4-5-20251001')}"
     raise RuntimeError(
-        "No LLM provider configured. Add OPENAI_API_KEY, GEMINI_API_KEY, or ANTHROPIC_API_KEY to .env."
+        "No LLM provider configured. Add OPEN_ROUTER_API_KEY (or OPENAI_API_KEY, "
+        "GEMINI_API_KEY, ANTHROPIC_API_KEY) to .env."
     )
 
 
 def _run_with_http_retry(agent: Agent[None, _OutT], user: str | list[Any]) -> _OutT:
-    """Retry transient API errors (503 capacity, 429 rate-limit) with backoff. pydantic_ai's
-    built-in retries cover validation failures only, not upstream HTTP errors. `user` is either
-    a plain prompt string or a multimodal message list (text + image BinaryContent)."""
+    """Retry transient API errors with backoff. Covers upstream HTTP errors (503 capacity,
+    429 rate-limit, 5xx) and malformed responses (`UnexpectedModelBehavior`) — the latter is
+    common with free OpenRouter models that intermittently return an error envelope instead of
+    a completion. pydantic_ai's built-in retries cover only output-validation failures. `user`
+    is either a plain prompt string or a multimodal message list (text + image BinaryContent)."""
     backoffs = [4.0, 8.0, 20.0, 60.0]
     last_exc: BaseException | None = None
     for attempt in range(len(backoffs) + 1):
@@ -126,6 +142,11 @@ def _run_with_http_retry(agent: Agent[None, _OutT], user: str | list[Any]) -> _O
             wait = 60.0 if exc.status_code == 429 else backoffs[attempt]
             last_exc = exc
             time.sleep(wait)
+        except UnexpectedModelBehavior as exc:
+            if attempt == len(backoffs):
+                raise
+            last_exc = exc
+            time.sleep(backoffs[attempt])
     if last_exc:
         raise last_exc
     raise RuntimeError("retry loop exited without result")

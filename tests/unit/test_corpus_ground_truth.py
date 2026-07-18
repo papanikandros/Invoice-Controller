@@ -12,9 +12,16 @@ from decimal import Decimal
 
 import pytest
 
-from tests.corpus import PROJECT_IDS, load_project
+from tests.corpus import CATEGORY_OVERRIDE, CORPUS_ROOT, PROJECT_IDS, load_project
 from tests.corpus.kostenaufstellung import parse_kostenaufstellung
 from tests.corpus.vne_tabelle import parse_vne_tabelle
+
+# The close-out corpus is client-confidential and not shipped in the repo; skip
+# these tests gracefully on a fresh clone rather than failing to collect.
+pytestmark = pytest.mark.skipif(
+    not PROJECT_IDS or not (CORPUS_ROOT / PROJECT_IDS[0]).exists(),
+    reason="confidential close-out corpus not present (see README)",
+)
 
 
 def _close(a, b, tol=Decimal("1.0")) -> bool:
@@ -62,11 +69,11 @@ def test_f2_invoice_table_reconciles(pid):
         )
 
 
-# Projects where the consultant overrode per-invoice categorization away from the
-# F1 offer ratio (documented so the F2 engine handles the exception rather than
-# assuming the ratio model is universal). Meyring re-books its L&R Nebenkosten
-# portion as Investitionskosten (see its Vorkasse/Werksverrohrung Erklärung).
-F2_CATEGORY_OVERRIDE = {"Meyring"}
+# Projects where the consultant overrode per-invoice categorization away from the F1 offer
+# ratio (e.g. re-booking a vendor's Nebenkosten portion as Investitionskosten via a project
+# note). Documented via the gitignored manifest so the F2 engine handles the exception rather
+# than assuming the ratio model is universal.
+F2_CATEGORY_OVERRIDE = CATEGORY_OVERRIDE
 
 
 @pytest.mark.parametrize("pid", PROJECT_IDS)

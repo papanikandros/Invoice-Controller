@@ -19,7 +19,22 @@ FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 
 def load_fixture(project: str, stem: str) -> dict[str, Any]:
+    # Recorded fixtures embed real client/vendor offer data, so they are gitignored
+    # and not shipped; fixture-backed tests skip automatically on a fresh clone.
     path = FIXTURES_DIR / project / f"{stem}.json"
+    if not path.exists():
+        pytest.skip("recorded response fixtures not present (see README)")
+    return json.loads(path.read_text())
+
+
+def load_cases(project: str) -> list[dict[str, Any]]:
+    """Per-project case manifest (pdf filename + stub fingerprint per recorded offer).
+
+    Lives beside the gitignored fixtures so no real vendor/offer identifiers appear in
+    committed test source; tests read it and skip when the local corpus is absent."""
+    path = FIXTURES_DIR / project / "_cases.json"
+    if not path.exists():
+        pytest.skip("recorded response fixtures not present (see README)")
     return json.loads(path.read_text())
 
 
@@ -54,21 +69,21 @@ def make_fingerprint_agent(fingerprints: dict[str, dict[str, Any]]) -> Agent[Non
     )
 
 
-@pytest.fixture
-def stub_agent_ek4_204() -> Agent[None, ExtractedOffer]:
+def _agent_from_cases(project: str) -> Agent[None, ExtractedOffer]:
     fingerprints = {
-        "atb Elektronische Steuerungen": load_fixture("ek4_204", "atb"),
-        "MUNK GmbH": load_fixture("ek4_204", "munk"),
-        "L&R Kältetechnik": load_fixture("ek4_204", "lr"),
+        case["fingerprint"]: load_fixture(project, case["stem"]) for case in load_cases(project)
     }
     return make_fingerprint_agent(fingerprints)
 
 
 @pytest.fixture
+def stub_agent_ek4_204() -> Agent[None, ExtractedOffer]:
+    return _agent_from_cases("ek4_204")
+
+
+@pytest.fixture
 def stub_agent_ek4_322_statement() -> Agent[None, ExtractedOffer]:
-    return make_fingerprint_agent(
-        {"Werksverrohrung": load_fixture("ek4_322", "craemer_stellungnahme")}
-    )
+    return _agent_from_cases("ek4_322")
 
 
 def make_summarize_agent(narrative: dict[str, Any]) -> Agent[None, CostNarrative]:
@@ -100,7 +115,12 @@ def stub_summarize_agent() -> Agent[None, CostNarrative]:
 
 @pytest.fixture
 def ek4_204_dir() -> Path:
-    return EXAMPLES_DIR / "EK4_204"
+    # The example corpus is client-confidential and not shipped; tests that read
+    # the real EK4_204 offer PDFs skip automatically on a fresh clone.
+    d = EXAMPLES_DIR / "EK4_204"
+    if not d.exists():
+        pytest.skip("confidential EK4_204 corpus not present (see README)")
+    return d
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:

@@ -18,6 +18,7 @@ from invoice_controller.models import (
 )
 from invoice_controller.narrative import render_narrative_blocks
 from invoice_controller.template.ods import write_kostenaufstellung
+from tests.conftest import load_cases
 
 
 def _table_text(table: Table) -> str:
@@ -35,7 +36,7 @@ def _offer(
     *,
     inv: str = "100000.00",
     neb: str = "0.00",
-    filename: str = "2. Leistritz Angebot-Soll.pdf",
+    filename: str = "2. Musterlieferant Angebot-Soll.pdf",
 ) -> OfferDocument:
     positions = [
         Position(pos="1", description="Maschine", line_total_net=Decimal(inv),
@@ -49,7 +50,7 @@ def _offer(
     totals = OfferTotals(nettosumme=sum((Decimal(p.line_total_net) for p in positions), Decimal(0)))
     return OfferDocument(
         source_path=Path("/x") / filename,
-        header=OfferHeader(vendor_name="Leistritz", offer_number="149579-5", offer_date=date(2026, 3, 16)),
+        header=OfferHeader(vendor_name="Musterlieferant C", offer_number="0000", offer_date=date(2026, 3, 16)),
         positions=positions,
         totals=totals,
         cross_sum=check_offer(positions, totals),
@@ -69,12 +70,12 @@ def test_render_blocks_amount_omitted_when_zero() -> None:
 
     assert inv_text == (
         "Die Investitionskosten 4.120.000,00 € beinhalten den Zweischneckenextruder "
-        "(s. Anlage 2. Leistritz Angebot-Soll.pdf, Seite 2 und 3)"
+        "(s. Anlage 2. Musterlieferant Angebot-Soll.pdf, Seite 2 und 3)"
     )
     # Nebenkosten subtotal is 0 -> no euro amount, but the block still renders.
     assert neb_text == (
         "Die Nebenkosten beinhalten die Stahlbühne, das Engineering "
-        "(s. Anlage 2. Leistritz Angebot-Soll.pdf, Seite 3)"
+        "(s. Anlage 2. Musterlieferant Angebot-Soll.pdf, Seite 3)"
     )
 
 
@@ -104,7 +105,7 @@ def test_render_blocks_none_narrative() -> None:
 
 def test_extract_offer_populates_narrative_with_stub(stub_agent_ek4_204, stub_summarize_agent, ek4_204_dir: Path) -> None:
     offer = extract_offer(
-        ek4_204_dir / "6. atb Angebot-Soll- Netzanschluss.pdf",
+        ek4_204_dir / load_cases("ek4_204")[0]["pdf"],
         agent=stub_agent_ek4_204,
         summarize_agent=stub_summarize_agent,
     )
@@ -137,7 +138,7 @@ def test_narrative_written_to_separate_sheet(tmp_path: Path) -> None:
     assert "Seite 2 und 3" in beschr_text
     assert "Die Investitionskosten" not in kosten_text
     # The SOLL header is repeated on the description sheet as each offer's header.
-    assert "SOLL: Leistritz" in beschr_text
+    assert "SOLL: Musterlieferant C" in beschr_text
 
 
 def test_no_description_sheet_without_narrative(tmp_path: Path) -> None:

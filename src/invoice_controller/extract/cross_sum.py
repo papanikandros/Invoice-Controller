@@ -43,8 +43,8 @@ def check_offer(
 
     Optional positions (Optionalposition / Eventualposition / Mehrpreis / parenthesized
     prices) may be inside or outside the document's stated net total — the offers are not
-    consistent about it (e.g. L&R folds Mehrpreis lines into the Gesamtpreis, while a
-    GranuTrack 'optionale Position' has an empty Betrag and sits outside the sum). So the
+    consistent about it (e.g. some offers fold Mehrpreis lines into the Gesamtpreis, while
+    another leaves an 'optionale Position' with an empty Betrag outside the sum). So the
     check passes if the stated Nettosumme reconciles to EITHER the mandatory-only sum OR
     the sum including priced optionals. Either match confirms faithful extraction; a miss
     on both means a position was dropped, double-counted, or a subtotal was mis-captured.

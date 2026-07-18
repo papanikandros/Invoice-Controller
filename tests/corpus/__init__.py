@@ -7,16 +7,22 @@ values so the pipelines can be regression-tested against real close-outs.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
 CORPUS_ROOT = Path(__file__).resolve().parents[2] / "examples"
 
-# Named-client close-out projects (offer + invoices + F1 + F2 ground truth).
-PROJECT_IDS = [
-    "Craemer", "Dannemann", "Jacob", "KRR", "Meyring",
-    "NaturinForm", "Presspart", "Thess", "WHW", "ZePa",
-]
+# The named-client close-out projects (offer + invoices + F1 + F2 ground truth) are real
+# BAFA clients, so the roster — and the set of projects with a consultant category override —
+# live in a gitignored manifest beside the fixtures rather than in committed source. Absent on
+# a fresh clone → empty, and the corpus tests skip.
+_ROSTER = Path(__file__).resolve().parents[1] / "fixtures" / "corpus_projects.json"
+_roster = json.loads(_ROSTER.read_text()) if _ROSTER.exists() else {}
+PROJECT_IDS: list[str] = _roster.get("projects", [])
+# Projects where the consultant overrode per-invoice categorization away from the F1 offer
+# ratio; F2 needs a projekt.yaml categorization override to reproduce these.
+CATEGORY_OVERRIDE: set[str] = set(_roster.get("category_override", []))
 
 _INVOICE_HINT = ("rg ", "rg_", "re-", "rg0", "rechnung", "gutschrift")
 _OFFER_HINT = ("angebot", "-soll", " soll", "schätzung", "stellungnahme", "kostenvoranschlag")

@@ -19,7 +19,7 @@ from pathlib import Path
 # German money token, e.g. "413.050,00 €", "-5.332,77", "0,00 €".
 _MONEY = re.compile(r"-?\d{1,3}(?:\.\d{3})*,\d{2}")
 _PCT = re.compile(r"-?\d{1,3}(?:\.\d{3})*,\d{2}\s*%")
-# Block titles vary by vendor template: "SOLL:", "SOLL L&R Angebot", "NEU: Mainka",
+# Block titles vary by template: "SOLL:", "SOLL <vendor> Angebot", "NEU: <vendor>",
 # "SOLL Angebot.Nr:", "Soll-Nebenostenschätzung:". Anchor on the keyword + an offer cue.
 _BLOCK_HEADER = re.compile(
     r"(\b(SOLL|NEU)\b.*(Angebot|vom|Schätzung|Nebenkosten|Nebenosten))"

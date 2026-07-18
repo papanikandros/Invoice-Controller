@@ -18,8 +18,8 @@ from tests.ods_inspect import read_kostenaufstellung
 
 def _make_offer(tmp_path: Path) -> OfferDocument:
     header = OfferHeader(
-        vendor_name="atb Elektronische Steuerungen GmbH",
-        offer_number="2400104",
+        vendor_name="Musterlieferant A GmbH",
+        offer_number="0000",
         offer_date=date(2024, 4, 8),
         title="Netzanschluss",
     )
@@ -40,7 +40,7 @@ def _make_offer(tmp_path: Path) -> OfferDocument:
     totals = OfferTotals(nettosumme=Decimal("108640.00"))
     cross_sum = check_offer(positions, totals)
     return OfferDocument(
-        source_path=tmp_path / "atb.pdf",
+        source_path=tmp_path / "muster.pdf",
         header=header,
         positions=positions,
         totals=totals,
@@ -56,8 +56,8 @@ def test_kostenaufstellung_roundtrips(tmp_path: Path) -> None:
     blocks = read_kostenaufstellung(out)
     assert len(blocks) == 1
     block = blocks[0]
-    assert "atb" in block.soll_header
-    assert "2400104" in block.soll_header
+    assert "Musterlieferant A" in block.soll_header
+    assert "0000" in block.soll_header
     assert len(block.rows_positions) == 2
 
     total_col = 2  # Gesamtkosten

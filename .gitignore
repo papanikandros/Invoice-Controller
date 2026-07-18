@@ -6,10 +6,15 @@ dist/
 wheels/
 *.egg-info
 
+# Tool caches
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
 # Virtual environments
 .venv
 
-# Secrets / local configuration
+# Secrets / local configuration (note: .env.example IS committed)
 .env
 *.env.local
 
@@ -18,4 +23,17 @@ output/
 /tmp_*
 tmp/
 
+# Client-confidential corpus — never commit
 examples/
+
+# Recorded LLM-response fixtures embed real client/vendor offer data — keep local
+tests/fixtures/
+
+# Belt-and-suspenders: no client documents at the repo root
+/*.pdf
+/*.csv
+/*.xlsx
+/*.ods
+/*.odt
+# Internal planning/analysis doc — dense with real client data, kept local
+PLAN.md

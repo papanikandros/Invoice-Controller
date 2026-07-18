@@ -12,11 +12,13 @@ dependencies = [
     "openai>=2.41.0",
     "openpyxl>=3.1.5",
     "pdfplumber>=0.11.9",
+    "pgeocode>=0.5.0",
     "pydantic>=2.13.4",
     "pydantic-ai>=1.106.0",
     "pypdf>=6.13.0",
     "pypdfium2>=4.30.0",
     "python-dotenv>=1.2.2",
+    "trafilatura>=2.1.0",
     "typer>=0.26.7",
 ]
 
@@ -56,7 +58,7 @@ strict = true
 files = ["src"]
 
 [[tool.mypy.overrides]]
-module = ["pypdfium2", "pytesseract"]
+module = ["pypdfium2", "pytesseract", "pgeocode", "trafilatura"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

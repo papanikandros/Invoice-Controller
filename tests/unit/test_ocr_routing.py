@@ -25,7 +25,7 @@ def test_is_text_layer_empty() -> None:
 
 def _fake_extraction() -> tuple[OfferHeader, list[Position], OfferTotals, DocumentKind]:
     header = OfferHeader(
-        vendor_name="Craemer GmbH",
+        vendor_name="Musterfirma GmbH",
         offer_number="Stellungnahme",
         offer_date=date(2026, 6, 23),
     )

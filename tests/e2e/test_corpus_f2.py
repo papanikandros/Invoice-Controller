@@ -22,14 +22,14 @@ from decimal import Decimal
 
 import pytest
 
-from tests.corpus import PROJECT_IDS, load_project
+from tests.corpus import CATEGORY_OVERRIDE, PROJECT_IDS, load_project
 from tests.corpus.vne_tabelle import parse_vne_tabelle
 
 F2_IMPLEMENTED = False
 
-# Meyring re-books its L&R Nebenkosten portion as Investitionskosten via a project
-# note; F2 needs a projekt.yaml categorization override to reproduce it.
-NEEDS_CATEGORY_OVERRIDE = {"Meyring"}
+# Projects that re-book a vendor's Nebenkosten portion as Investitionskosten via a project
+# note; F2 needs a projekt.yaml categorization override to reproduce them.
+NEEDS_CATEGORY_OVERRIDE = CATEGORY_OVERRIDE
 
 
 def _expected(pid):
@@ -47,8 +47,8 @@ def test_f2_reproduces_vne_tabelle(pid):
     if not F2_IMPLEMENTED:
         pytest.skip("F2 not implemented yet — scaffold pins the target contract")
 
-    from invoice_controller.extract.vne import build_vne_tabelle  # noqa: F401
     from invoice_controller.config import load_project_config  # noqa: F401
+    from invoice_controller.extract.vne import build_vne_tabelle  # noqa: F401
 
     exp = _expected(pid)
     proj = load_project(pid)

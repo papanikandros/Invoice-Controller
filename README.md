@@ -2,141 +2,121 @@
 
 A Python CLI that runs at the close of an EEW Modul 4 funded investment, in preparation for the **Verwendungsnachweis** submission to BAFA. It extracts structured data from German vendor offers (and, in F2, the paid invoices) and writes a standardised **Kontrollmappe** `.ods` workbook that the consultant uses as the working artifact for the BAFA filing.
 
-For the funding-lifecycle context, German terminology, and design rationale, see [PLAN.md](PLAN.md) and [CLAUDE.md](CLAUDE.md).
+For the funding-lifecycle context, German terminology, and design rationale, see [CLAUDE.md](CLAUDE.md).
 
 ## Status
 
-**F1 (offer extraction → Kostenaufstellung.ods) is implemented and working.** Given one or more offer PDFs, the tool extracts vendor metadata, all priced positions, totals, and (where present) Sonderpreis / Preisnachlass; classifies each position into Investitionskosten / Nebenkosten / Nachlass; and writes a styled, formula-driven `.ods` matching the consultant's existing workbook layout, with all numbers in German format (`1.000,00 €`, `100,00 %`). 27 unit tests pass; live E2E tests pass against `examples/EK4_204/` (OpenAI gpt-5-mini).
+Three procedures, at different stages:
 
-**F2 (offer + invoice matching) is the next phase.** See [PLAN.md](PLAN.md) for the roadmap.
+- **F1 — offer extraction → `Kostenaufstellung.ods` — shipping.** Given one or more offer PDFs, the tool extracts vendor metadata, all priced positions (including optionals), totals, and (where present) Sonderpreis / Preisnachlass; classifies each position into Investitionskosten / Nebenkosten / Nachlass; and writes a styled, formula-driven `.ods` with all numbers in German format (`1.000,00 €`, `100,00 %`). Scanned PDFs (no text layer) fall back to local Tesseract OCR, then a cloud vision-LLM. Client cost statements (*Stellungnahme* / *Schätzung*) are handled alongside vendor offers. A cross-sum check guards every extraction.
+- **F3 — client Standortbeschreibung → `.odt` — shipping.** Reads a project's filled *Fragenkatalog Modul 4* PDF (or ad-hoc `--firma/--strasse/--plz/--stadt`), scrapes the client website, derives geo facts offline (PLZ → Bundesland/Regierungsbezirk via pgeocode; Kreis/roads via OpenStreetMap), and assembles the German company/location description required by Antrag section 1.2. No LLM is used for the geo data.
+- **F2 — offer + invoice matching → VNE-Tabelle — not yet implemented.** The `f2` command is a stub.
 
 ## Prerequisites
 
 - **Linux** (developed on Manjaro; should work on any modern distro)
 - **Python 3.13**
 - **[uv](https://docs.astral.sh/uv/)** — the package manager
-- **LibreOffice** — to open the generated `.ods`. Optional for headless PDF preview: `libreoffice --headless --convert-to pdf <file>.ods`
-- An **LLM API key** for one of: OpenAI (recommended), Google Gemini, or Anthropic
+- **LibreOffice** — to open the generated `.ods` / `.odt`. Optional headless PDF preview: `libreoffice --headless --convert-to pdf <file>.ods`
+- **poppler** (`pdftotext`) — used by the F3 Fragenkatalog parser to read filled AcroForm PDFs
+- An **LLM API key** (see below). Optional: system `tesseract` + `deu` language pack for on-prem OCR of scanned PDFs.
 
 ## Install
 
 ```sh
 git clone <repo-url>
 cd Invoice-Controller
-uv sync
+uv sync                 # add `--extra ocr` for the local Tesseract tier
 ```
 
-This creates a `.venv`, installs all dependencies including the project itself in editable mode, and makes the `invoice-controller` command available via `uv run`.
+This creates a `.venv`, installs all dependencies plus the project in editable mode, and makes the `invoice-controller` command available via `uv run`.
 
 ## Configure: `.env`
 
-Create a `.env` file in the project root with at least one provider key. The tool's provider preference order is **OpenAI → Gemini → Anthropic**, so set the one you want as primary.
-
 ```sh
-# Pick one (or set several; OpenAI wins by default):
-OPENAI_API_KEY=sk-proj-...
-GEMINI_API_KEY=AIza...
-ANTHROPIC_API_KEY=sk-ant-...
-
-# Optional model overrides:
-OPENAI_MODEL=gpt-5-mini            # default
-GEMINI_MODEL=gemini-2.5-flash      # default
-ANTHROPIC_MODEL=claude-haiku-4-5-20251001
-
-# Optional full override of the model string passed to pydantic_ai:
-# LLM_MODEL=openai-chat:gpt-5
+cp .env.example .env
+# then edit .env and fill in ONE provider key
 ```
 
-`.env` is gitignored.
+The provider preference order is **OpenRouter → OpenAI → Gemini → Anthropic**; the first key present wins. The recommended default is OpenRouter with `OPENROUTER_MODEL=google/gemini-2.5-flash` — one key reaches a reliable multimodal model (needed for the scanned-PDF vision path) at cents per project. Avoid `:free` models for F1/F2: they return unreliable structured output. See [`.env.example`](.env.example) for every supported variable. `.env` is gitignored; `.env.example` is committed.
 
 ## Run F1
 
-`invoice-controller f1 <path>` accepts **either a single offer PDF or a directory** containing PDFs.
+`invoice-controller f1 <path>` accepts **either a single offer PDF or a directory** of PDFs. When given a directory it skips non-offer files (Fragenkatalog, Kostenaufstellung, VNE-Tabelle, invoices, …) and processes only the offers.
 
 ```sh
-# Single offer
-uv run invoice-controller f1 "examples/EK4_204/6. atb Angebot-Soll- Netzanschluss.pdf" -o tmp/atb.ods
+# All offers in a project folder → writes <folder>/Kostenaufstellung.ods
+uv run invoice-controller f1 path/to/project-folder/
 
-# All offers in a directory
-uv run invoice-controller f1 examples/EK4_204/ -o tmp/EK4_204.ods
+# Single offer, explicit output path
+uv run invoice-controller f1 path/to/offer.pdf -o tmp/offer.ods
 ```
 
-Output:
+Output: a per-offer console summary (vendor, offer #, positions table, cross-sum pass/fail) and a `.ods` workbook with one styled block per offer (SOLL header → column header → positions → Σ row → optional Sonderpreis row → percentage row). Σ totals are live `SUM()` formulas; edit a position and totals recompute. Open it in LibreOffice to review.
 
-- Console summary per offer (vendor, offer #, date, positions table, cross-sum check pass/fail)
-- A `.ods` workbook with one styled block per offer (SOLL header → column header → positions → Σ row → optional Sonderpreis row → percentage row)
+## Run F3
 
-Open the `.ods` in LibreOffice to review and edit. Cells use German EUR / percentage formatting; Σ totals are live `SUM()` formulas; Sonderpreis Nachlass and the percentage row use cell-reference formulas. Edit a position value and totals will recompute.
+`invoice-controller f3 <project_dir>` reads the *Fragenkatalog Modul 4* PDF in the folder and writes `Standortbeschreibung.odt` beside it.
 
-## How extraction works
+```sh
+uv run invoice-controller f3 path/to/project-folder --url example.com
+```
 
-1. **PDF text extraction** — pdfplumber pulls layout-preserved text from each page.
-2. **LLM extraction** — pydantic_ai's `Agent` (configured for OpenAI / Gemini / Anthropic via the env vars above) returns a typed `ExtractedOffer` Pydantic model: vendor metadata, positions with category classification, totals (Nettosumme, MwSt., Endbetrag, Sonderpreis, Preisnachlass). The prompt enforces 9 explicit rules covering sub-items, group subtotals, document-level discounts, classification, and the cross-sum constraint.
-3. **Cross-sum check** — `Σ(positions.line_total_net) ≈ totals.nettosumme` within `0.02 €` tolerance. Failures surface in the console with the specific delta; the consultant decides whether to fix.
-4. **`.ods` rendering** — odfdo writes the workbook with the template's existing styles plus a handful of custom styles (German locale on the data-style root, Light Yellow 3 background on the money columns, bold/underline on Σ row, merged 6-column SOLL header). All numbers are pre-formatted in German style (`1.000,00 €`) AND tagged with the German data-style, so the file renders correctly regardless of the user's LibreOffice locale.
+Without a Fragenkatalog you can drive it ad-hoc: `--firma "Muster GmbH" --strasse "Hauptstr. 1" --plz 59227 --stadt Ahlen --url example.com`. Use `--offline` to skip the OSM Kreis/road lookups, `--betreiber` for a distinct operating tenant, and `--schicht 1|2|3` to override the shift model (→ working hours 8–16 / 8–12 / 8–8).
+
+## How F1 extraction works
+
+1. **PDF text** — pdfplumber pulls layout-preserved text per page. If there's no text layer, it routes to local Tesseract OCR, then a cloud vision-LLM.
+2. **LLM extraction** — pydantic_ai's `Agent` returns a typed `ExtractedOffer`: vendor metadata, positions with category classification, totals. The prompt is vendor-agnostic (no per-vendor parsers).
+3. **Cross-sum check** — `Σ(positions.line_total_net) ≈ Nettosumme` within `0.02 €`. A mismatch surfaces in the console with the delta. Client statements have no document total, so their check is reported *not applicable* (the consultant verifies the Σ by hand).
+4. **`.ods` rendering** — odfdo writes the workbook from a shipped template (`src/invoice_controller/template/template.ods`), reusing its styles and block shape. German locale is set on the data-style root so numbers render as `1.000,00 €` regardless of the user's LibreOffice locale.
 
 ## Testing
 
 ```sh
-# Unit tests (27 tests, ~4 s, no API calls — uses FunctionModel stub)
-uv run pytest tests/unit -v
+# Unit tests — fast, no API calls (uses a FunctionModel stub agent)
+uv run pytest tests/unit -q
 
-# Live E2E tests against examples/EK4_204/ (real API calls, costs ~$0.05 with gpt-5-mini)
-uv run pytest tests/e2e --run-live -v
+# Live E2E tests — real API calls, needs a key in .env
+uv run pytest tests/e2e --run-live -q
 ```
 
-The unit suite includes:
-
-- German number / date parsing round-trips
-- Cross-sum edge cases (exact match, within tolerance, outside tolerance, missing Nettosumme)
-- Full pipeline regression on the 3 EK4_204 offers using pre-recorded LLM responses
-- `.ods` write → read round-trip verifying formula presence + structure
-
-E2E tests require an API key in `.env` and verify the real LLM produces the expected positions, vendor metadata, cross-sum, and Sonderpreis.
+**Note on the example corpus:** the `examples/` folder holds real client offers, invoices, and close-out artifacts. It is **client-confidential and not included in the repository** (`examples/` is gitignored). Tests that depend on it skip automatically on a fresh clone. So a fresh clone runs the pure-logic tests green (parsing, cross-sum, models, CLI filtering, statement handling, ODS writer) and skips the corpus-backed ones. With the corpus present locally, the full suite passes. To exercise the corpus-backed tests, drop your own project folders into `examples/`.
 
 ## Project layout
 
 ```
 Invoice-Controller/
 ├── README.md                       — this file
-├── PLAN.md                         — architecture, library stack, roadmap
 ├── CLAUDE.md                       — domain context for assistant sessions
 ├── pyproject.toml                  — uv project + ruff/mypy/pytest config
-├── .env                            — your local API keys (gitignored)
+├── .env.example                    — copy to .env and add a provider key
 ├── src/invoice_controller/
-│   ├── cli.py                      — Typer CLI: `f1`, `f2`
-│   ├── models.py                   — Pydantic: OfferDocument, OfferHeader, Position, OfferTotals, CrossSumCheck, Kostenkategorie
+│   ├── cli.py                      — Typer CLI: f1, f2 (stub), f3
+│   ├── models.py                   — Pydantic: OfferDocument, Position, OfferTotals, CrossSumCheck, …
 │   ├── normalize.py                — German number / date / umlaut / soft-hyphen helpers
-│   ├── pdf/text.py                 — pdfplumber wrapper (per-page text extraction)
-│   ├── extract/
-│   │   ├── offer.py                — orchestrator: pdf → LLM → cross-sum → OfferDocument
-│   │   └── cross_sum.py            — Σ(positions) vs Nettosumme tolerance check
-│   ├── llm/extract.py              — pydantic_ai Agent + prompt + HTTP retry (503/429)
-│   └── template/ods.py             — odfdo-based Kostenaufstellung renderer with style injection
+│   ├── geo.py                      — offline PLZ geo (pgeocode) + OSM Kreis/roads
+│   ├── pdf/                        — pdfplumber text + OCR routing (Tesseract / vision)
+│   ├── extract/                    — orchestrator, cross-sum check
+│   ├── llm/                        — pydantic_ai Agent, prompt, provider resolution, HTTP retry
+│   ├── narrative.py                — deterministic prose-block assembly for the description sheet
+│   ├── standort/                   — F3: Fragenkatalog parse, scrape, assemble, .odt writer
+│   └── template/
+│       ├── ods.py                  — odfdo Kostenaufstellung renderer
+│       └── template.ods            — shipped template (sanitized placeholder headers)
 ├── tests/
-│   ├── conftest.py                 — FunctionModel-based stub agent, fixtures, --run-live flag
-│   ├── ods_inspect.py              — semantic reader for output .ods (block / row / cell)
-│   ├── diff_kostenaufstellung.py   — CLI: semantic diff between two Kostenaufstellung .ods
-│   ├── fixtures/ek4_204/           — ideal LLM responses for atb / Munk / L&R
-│   ├── unit/                       — fast, deterministic regression tests
+│   ├── conftest.py                 — FunctionModel stub agent, fixtures, --run-live flag
+│   ├── corpus/                     — ground-truth readers (F1 PDF, F2 VNE .xlsx)
+│   ├── unit/                       — fast, deterministic tests (corpus-backed ones auto-skip)
 │   └── e2e/                        — live API tests (opt-in via --run-live)
-├── examples/
-│   ├── template.ods                — the canonical Kostenaufstellung template (first block = block template)
-│   └── EK4_204/                    — the regression corpus: 3 offer PDFs + ground-truth .ods
+├── examples/                       — client-confidential corpus (gitignored, not shipped)
 ├── tmp/                            — scratch outputs (gitignored)
 └── test.py                         — historical 2024 prototype (kept for reference; not used)
 ```
 
 ## What's next (F2)
 
-- **Invoice extraction**: same LLM pipeline applied to invoice PDFs, with an invoice-specific schema (Rechnungsnummer, Rechnungsdatum, Lieferant, Rechnungsempfänger, Skontoabzug, MwSt., Endbetrag).
-- **Per-invoice sanity checks**: date within project window, billing address fuzzy-match against the project's client.
-- **Multi-signal matching**: per-vendor, scoring on article# / description similarity / price proximity / quantity / section context; confidence tiers (high / medium / low); LLM second opinion on medium-confidence.
-- **Verification TUI**: Textual-based bulk-approve workflow.
-- **F2 `.ods` extension**: additional sheets for invoice positions, Abgleich (matching), Datums- & Adressprüfung, Summen.
-- **`projekt.yaml`**: per-project config (client, address, project window, expected vendor list, output filename pattern).
-
-See [PLAN.md](PLAN.md) §"Phase 2" for the full breakdown.
+Invoice extraction, per-invoice date/address sanity checks, per-vendor multi-signal matching with confidence tiers, a bulk-approve verification UX, and the **VNE-Tabelle** `.xlsx` output (per-vendor Investitionskosten / Nebenkosten ratio).
 
 ## Sibling project
 

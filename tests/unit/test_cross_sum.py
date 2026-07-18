@@ -59,7 +59,7 @@ def test_cross_sum_fails_when_no_nettosumme() -> None:
 
 
 def test_optional_outside_stated_total_passes_via_mandatory() -> None:
-    # GranuTrack-style: Nettosumme excludes the optional lines.
+    # Optional-outside-total style: Nettosumme excludes the optional lines.
     positions = [_pos("31970.00", "1"), _opt("350.00", "5"), _opt("2600.00", "6")]
     totals = OfferTotals(nettosumme=Decimal("31970.00"))
     result = check_offer(positions, totals)
@@ -69,7 +69,7 @@ def test_optional_outside_stated_total_passes_via_mandatory() -> None:
 
 
 def test_optional_inside_stated_total_passes_via_with_optional() -> None:
-    # L&R-style: Mehrpreis surcharges flagged optional but folded into the Gesamtpreis.
+    # Optional-inside-total style: Mehrpreis surcharges flagged optional but folded into the Gesamtpreis.
     positions = [_pos("300000.00", "1"), _opt("4800.00", "17"), _opt("8750.00", "18")]
     totals = OfferTotals(nettosumme=Decimal("313550.00"))
     result = check_offer(positions, totals)

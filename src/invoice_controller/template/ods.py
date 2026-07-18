@@ -9,9 +9,9 @@ from invoice_controller.models import DocumentKind, Kostenkategorie, OfferDocume
 from invoice_controller.narrative import render_narrative_blocks
 from invoice_controller.normalize import format_de_decimal
 
-TEMPLATE_PATH = (
-    Path(__file__).parent.parent.parent.parent / "examples" / "template.ods"
-)
+# Shipped code asset (sanitized placeholder headers). The real project template
+# stays in the gitignored examples/ corpus; the writer only reuses styles + block shape.
+TEMPLATE_PATH = Path(__file__).parent / "template.ods"
 
 HEADER_COLS = [
     "Position",
