@@ -4,7 +4,11 @@ from functools import lru_cache
 
 from pydantic_ai import Agent
 
-from invoice_controller.llm.extract import _resolve_model, _run_with_http_retry
+from invoice_controller.llm.extract import (
+    DETERMINISTIC_SETTINGS,
+    _resolve_model,
+    _run_with_http_retry,
+)
 from invoice_controller.models import CostNarrative
 
 SYSTEM_PROMPT = """You write a short German prose summary of a vendor offer (Angebot) for an EEW Modul 4 energy-efficiency consulting workflow. The consultant pastes your summary into the Verwendungsnachweis (BAFA proof-of-funds-usage). Two summaries are produced per offer: one for the INVESTITIONSKOSTEN (capital goods) and one for the NEBENKOSTEN (ancillary services). Correctness over completeness: only describe what is actually in the document.
@@ -34,6 +38,7 @@ def get_summarize_agent() -> Agent[None, CostNarrative]:
         output_type=CostNarrative,
         system_prompt=SYSTEM_PROMPT,
         retries=3,
+        model_settings=DETERMINISTIC_SETTINGS,
     )
 
 

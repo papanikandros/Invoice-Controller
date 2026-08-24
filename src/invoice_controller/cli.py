@@ -135,6 +135,13 @@ def f1(
 
     write_kostenaufstellung(offers, output)
     console.print(f"\n[bold green]→ Wrote[/bold green] {output}")
+    failed = [o for o in offers if not o.cross_sum.passed and not o.cross_sum.not_applicable]
+    if failed:
+        console.print(
+            f"[bold red]⚠ {len(failed)} Block/Blöcke ohne Kreuzsummen-Abgleich[/bold red] — "
+            "im .ods rot markiert, Positionen manuell gegen das PDF prüfen: "
+            + ", ".join(o.source_path.name for o in failed)
+        )
 
 
 @app.command()

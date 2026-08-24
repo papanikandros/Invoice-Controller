@@ -47,6 +47,10 @@ class OfferBlock:
     soll_header: str
     rows_positions: list[OdsRow] = field(default_factory=list)
     row_sum: OdsRow | None = None
+    # "Nettosumme lt. Dokument" comparison row (only written when the cross-sum failed)
+    row_document_total: OdsRow | None = None
+    # "⚠ KREUZSUMME …" warning row (only written when the cross-sum failed)
+    row_warning: OdsRow | None = None
 
 
 def _parse_cell(elem: ET.Element) -> OdsCell:
@@ -107,6 +111,14 @@ def read_kostenaufstellung(path: Path) -> list[OfferBlock]:
 
             if first_text.startswith(("Σ", "Sum", "Gesamtpreis")):
                 current.row_sum = row
+                continue
+
+            if first_text.startswith("⚠"):
+                current.row_warning = row
+                continue
+
+            if not first_text and row.text_at(1).startswith("Nettosumme lt. Dokument"):
+                current.row_document_total = row
                 continue
 
             # A position row always carries a pos label in column 0. Numeric labels

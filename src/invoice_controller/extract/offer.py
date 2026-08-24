@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import sys
+from decimal import Decimal
 from pathlib import Path
 
 from pydantic_ai import Agent
@@ -13,7 +14,13 @@ from invoice_controller.llm.extract import (
     extract_offer_llm_vision,
 )
 from invoice_controller.llm.summarize import summarize_offer_costs
-from invoice_controller.models import CostNarrative, DocumentKind, OfferDocument
+from invoice_controller.models import (
+    CostNarrative,
+    DocumentKind,
+    OfferDocument,
+    OfferTotals,
+    Position,
+)
 from invoice_controller.normalize import normalize_text
 from invoice_controller.pdf.ocr import (
     is_text_layer_empty,
@@ -38,6 +45,42 @@ def kind_from_filename(path: Path) -> DocumentKind | None:
     if _STATEMENT_FILENAME_RE.search(path.stem):
         return DocumentKind.STATEMENT
     return None
+
+
+_DISCOUNT_LABEL_RE = re.compile(r"rabatt|nachlass|skonto", re.IGNORECASE)
+_DISCOUNT_TOLERANCE = Decimal("0.02")
+
+
+def drop_duplicate_discount_positions(
+    positions: list[Position], totals: OfferTotals
+) -> list[Position]:
+    """R3b safety net: some LLM runs return the document-level discount BOTH as a
+    pseudo-position (e.g. pos='Rechnungsrabatt', line_total −119.000,01) AND in totals
+    (preisnachlass, or the nettosumme−sonderpreis differential). Keeping both would
+    double-represent the discount in the workbook and break the cross-sum against the
+    pre-discount Nettosumme. Drop the pseudo-position only when totals already carry the
+    same amount; genuine negative positions with their own Pos. number (e.g. 'Entfall
+    Magnetvorbereitung') are always kept."""
+    recorded: list[Decimal] = []
+    if totals.preisnachlass is not None:
+        recorded.append(totals.preisnachlass)
+    if totals.sonderpreis is not None and totals.nettosumme is not None:
+        recorded.append(totals.nettosumme - totals.sonderpreis)
+    if not recorded:
+        return positions
+
+    kept: list[Position] = []
+    for p in positions:
+        is_duplicate_discount = (
+            p.line_total_net is not None
+            and p.line_total_net < 0
+            and not p.pos.strip()[:1].isdigit()
+            and _DISCOUNT_LABEL_RE.search(f"{p.pos} {p.description}") is not None
+            and any(abs(-p.line_total_net - amt) <= _DISCOUNT_TOLERANCE for amt in recorded)
+        )
+        if not is_duplicate_discount:
+            kept.append(p)
+    return kept
 
 
 def extract_offer(
@@ -79,6 +122,7 @@ def extract_offer(
     if kind is DocumentKind.STATEMENT:
         cross_sum = check_statement(positions)
     else:
+        positions = drop_duplicate_discount_positions(positions, totals)
         cross_sum = check_offer(positions, totals)
 
     narrative: CostNarrative | None = None

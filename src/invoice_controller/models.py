@@ -115,6 +115,20 @@ class OfferTotals(BaseModel):
         description="Document-level discount applied to the whole offer (e.g. 'Preisnachlass netto EUR: -20.260,00'). Recorded as a positive amount; the consultant decides downstream how to apply.",
     )
 
+    @model_validator(mode="after")
+    def _normalize_discount_fields(self) -> OfferTotals:
+        # LLM runs occasionally deposit an end-of-table discount ("Sonderrabatt … -5.100,00")
+        # into sonderpreis, or return preisnachlass with the document's minus sign. Normalize
+        # so downstream consumers can rely on: preisnachlass = positive discount amount,
+        # sonderpreis = positive negotiated final price (or None).
+        if self.preisnachlass is not None and self.preisnachlass < 0:
+            self.preisnachlass = -self.preisnachlass
+        if self.sonderpreis is not None and self.sonderpreis <= 0:
+            if self.sonderpreis < 0 and self.preisnachlass is None:
+                self.preisnachlass = -self.sonderpreis
+            self.sonderpreis = None
+        return self
+
 
 class CostNarrative(BaseModel):
     """LLM-written prose summary of an offer's scope, split into investment and ancillary

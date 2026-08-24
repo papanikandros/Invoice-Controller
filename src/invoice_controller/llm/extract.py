@@ -46,7 +46,7 @@ CRITICAL RULES, in order of importance:
 
 (R3) If the document shows BOTH a "Gesamtpreis Pos.1 – Pos.N" AND a "Sonderpreis Pos.1 – Pos.N", record the Gesamtpreis as totals.nettosumme (Σ of all positions) and the Sonderpreis SEPARATELY in totals.sonderpreis. Do NOT subtract them, do NOT invent a Nachlass position. The consultant decides downstream how to handle the Sonderpreis differential.
 
-(R3b) A DOCUMENT-LEVEL DISCOUNT is a single line near the bottom of the position table or in the footer area that reduces the entire offer total, e.g. "Preisnachlass netto EUR: - 20.260,00", "Skonto auf Gesamtsumme", "Globaler Rabatt". This is NOT a position. Record its amount in totals.preisnachlass (as a positive number, no minus sign). The Nettosumme remains the gross sum of all positions BEFORE this discount. Only individual position lines (with their own Pos. number in the position table) count as positions, even if their price is negative.
+(R3b) A DOCUMENT-LEVEL DISCOUNT is a single line in the totals area — near the bottom of the position table, typically between a "Zwischensumme"/"Nettosumme" line and the final "Gesamtsumme"/"Gesamtbetrag" — that reduces the entire offer total. Typical labels: "Preisnachlass netto EUR: - 20.260,00", "Rechnungsrabatt", "Sonderrabatt", "Rabatt", "Skonto auf Gesamtsumme", "Globaler Rabatt". This is NOT a position — NEVER return it in the positions list, even though it carries its own amount. Record its amount in totals.preisnachlass (as a positive number, no minus sign) and NEVER in totals.sonderpreis: sonderpreis is reserved for a stated final PRICE, which is always positive and lower than totals.nettosumme — never a discount amount, never negative. The Nettosumme remains the gross sum of all positions BEFORE this discount. Only individual position lines (with their own Pos. number in the position table) count as positions, even if their price is negative.
 
 (R4) The SUM of line_total_net across all MANDATORY (non-optional) positions you return MUST equal totals.nettosumme. If you cannot make that sum match the document's stated Nettosumme (or Gesamtpreis Pos.1 – Pos.N when no separate Nettosumme is given), you have either missed a position, double-counted one, or counted a group subtotal as a position. Re-check before submitting. OPTIONAL positions (see R10) are excluded from this constraint — they may sit inside or outside the stated total. When the document states BOTH an "ohne Optionen" / "aller Komponenten" total and an "inkl. Optionen" total, use the WITHOUT-options figure as totals.nettosumme and mark the option lines optional.
 
@@ -82,6 +82,14 @@ CRITICAL RULES, in order of importance:
 """
 
 
+# Greedy decoding: consecutive runs over the same PDF should produce the same extraction.
+# Temperature 0 does not make an LLM bit-for-bit deterministic, but it removes sampling
+# variance — the dominant source of run-to-run flapping on judgment fields (optional flags,
+# Kostenkategorie, description wording). The deterministic guards (cross-sum, discount
+# normalization) and the consultant's review remain the correctness backstop.
+DETERMINISTIC_SETTINGS: dict = {"temperature": 0.0}
+
+
 @lru_cache(maxsize=1)
 def get_agent() -> Agent[None, ExtractedOffer]:
     return Agent(
@@ -89,6 +97,7 @@ def get_agent() -> Agent[None, ExtractedOffer]:
         output_type=ExtractedOffer,
         system_prompt=SYSTEM_PROMPT,
         retries=3,
+        model_settings=DETERMINISTIC_SETTINGS,
     )
 
 

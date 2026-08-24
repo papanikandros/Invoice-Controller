@@ -5,7 +5,7 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from invoice_controller.models import MAX_DESCRIPTION_LEN, Position
+from invoice_controller.models import MAX_DESCRIPTION_LEN, OfferTotals, Position
 
 
 def _pos(description: str) -> Position:
@@ -56,3 +56,30 @@ def test_optional_position_may_omit_line_total() -> None:
     )
     assert pos.optional
     assert pos.line_total_net is None
+
+
+# --- OfferTotals discount-field normalization -------------------------------------------
+
+def test_negative_sonderpreis_becomes_preisnachlass() -> None:
+    # LLM runs occasionally deposit the discount AMOUNT ("Sonderrabatt … -5.100,00")
+    # into sonderpreis; the validator must reinterpret it as a document-level discount.
+    totals = OfferTotals(nettosumme=Decimal("373600.00"), sonderpreis=Decimal("-5100.00"))
+    assert totals.sonderpreis is None
+    assert totals.preisnachlass == Decimal("5100.00")
+
+
+def test_negative_sonderpreis_keeps_existing_preisnachlass() -> None:
+    totals = OfferTotals(preisnachlass=Decimal("5100.00"), sonderpreis=Decimal("-5100.00"))
+    assert totals.sonderpreis is None
+    assert totals.preisnachlass == Decimal("5100.00")
+
+
+def test_negative_preisnachlass_is_made_positive() -> None:
+    totals = OfferTotals(preisnachlass=Decimal("-119000.01"))
+    assert totals.preisnachlass == Decimal("119000.01")
+
+
+def test_positive_sonderpreis_is_kept() -> None:
+    totals = OfferTotals(nettosumme=Decimal("373600.00"), sonderpreis=Decimal("368500.00"))
+    assert totals.sonderpreis == Decimal("368500.00")
+    assert totals.preisnachlass is None

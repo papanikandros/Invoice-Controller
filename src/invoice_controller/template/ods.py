@@ -5,7 +5,13 @@ from pathlib import Path
 
 from odfdo import Cell, Document, Element, Table
 
-from invoice_controller.models import DocumentKind, Kostenkategorie, OfferDocument, Position
+from invoice_controller.models import (
+    CrossSumCheck,
+    DocumentKind,
+    Kostenkategorie,
+    OfferDocument,
+    Position,
+)
 from invoice_controller.narrative import render_narrative_blocks
 from invoice_controller.normalize import format_de_decimal
 
@@ -24,6 +30,10 @@ HEADER_COLS = [
 
 # Light Yellow 3 — applied ONLY to the four cost columns in position rows.
 LIGHT_YELLOW_3 = "#FFFF99"
+# Cross-sum warning row background/text — loud on purpose: a block whose Σ does not
+# reconcile with the document must be unmistakable inside the workbook itself.
+LIGHT_RED = "#FFCCCC"
+WARN_RED = "#CC0000"
 
 S_HEADER_BOLD = "ce2"           # SOLL header + column header row (bold centered, from template)
 S_POS_NUM = "IC_POS_NUM"        # Position number column — white, centered
@@ -35,6 +45,7 @@ S_SPP_LABEL = "IC_SPP_LABEL"    # Sonderpreis row's label cell — white, bold, 
 S_SPP_NUM = "IC_SPP_NUM"        # Sonderpreis row's money cells — white, bold, centered, EUR
 S_PCT = "IC_PCT"                # Percentage row — white, centered, German % with grouping
 S_NARRATIVE = "IC_NARRATIVE"    # Cost-description text blocks on the Kostenbeschreibung sheet
+S_WARN = "IC_WARN"              # Cross-sum warning row — bold red on light red, merged A–F
 
 # The cost descriptions live on their own sheet so the Kostenaufstellung layout stays clean.
 DESC_SHEET_NAME = "Kostenbeschreibung"
@@ -150,10 +161,25 @@ def _append_offer_block(table: Table, offer: OfferDocument, start_row: int) -> i
         sums["nac"], S_SUM_NUM,
     )
 
+    check = offer.cross_sum
+    cross_failed = not check.passed and not check.not_applicable
+
+    next_row = sum_row + 1
+    if cross_failed and check.expected is not None:
+        # The document's own stated Nettosumme next to the computed Σ, so a vendor-side
+        # arithmetic error (or a dropped/mis-captured position) is visible in the workbook
+        # itself, not only in the CLI output at extraction time.
+        _put_text(table, 0, next_row, "", S_SPP_LABEL)
+        _put_text(table, 1, next_row, "Nettosumme lt. Dokument", S_SPP_LABEL)
+        _put_money(table, 2, next_row, check.expected, S_SPP_NUM)
+        for c in (3, 4, 5):
+            _put_text(table, c, next_row, "", S_SPP_NUM)
+        next_row += 1
+
     sonderpreis = _effective_sonderpreis(offer)
     spp_nachlass: Decimal | None = None
     if sonderpreis is not None:
-        spp_row = sum_row + 1
+        spp_row = next_row
         spp_row_1based = spp_row + 1
         spp_nachlass = sums["gesamt"] - sonderpreis
 
@@ -180,7 +206,7 @@ def _append_offer_block(table: Table, offer: OfferDocument, start_row: int) -> i
         nachlass_ref_row = spp_row_1based
         nachlass_for_pct = spp_nachlass
     else:
-        pct_row = sum_row + 1
+        pct_row = next_row
         nachlass_ref_row = sum_row_1based
         nachlass_for_pct = sums["nac"]
 
@@ -213,7 +239,35 @@ def _append_offer_block(table: Table, offer: OfferDocument, start_row: int) -> i
         nachlass_ratio, S_PCT,
     )
 
-    return pct_row + 1
+    end_row = pct_row + 1
+    if cross_failed:
+        _put_text(table, 0, end_row, _cross_sum_warning_text(check), S_WARN)
+        table.set_span((0, end_row, 5, end_row))
+        end_row += 1
+
+    return end_row
+
+
+def _cross_sum_warning_text(check: CrossSumCheck) -> str:
+    """German one-liner for the in-workbook warning row of an unreconciled block."""
+    if check.expected is None:
+        return (
+            "⚠ KREUZSUMME NICHT PRÜFBAR: keine Nettosumme im Dokument gefunden — "
+            f"Σ Positionen = {format_de_decimal(check.actual)} € manuell gegen das PDF prüfen"
+        )
+    # Report the position sum that came closest to the stated total (the check accepts
+    # either the mandatory-only Σ or the Σ incl. optionals — see cross_sum.check_offer).
+    actual = check.actual
+    if check.actual_incl_optional is not None and abs(check.actual_incl_optional - check.expected) < abs(
+        actual - check.expected
+    ):
+        actual = check.actual_incl_optional
+    diff = actual - check.expected
+    return (
+        f"⚠ KREUZSUMME WEICHT AB: Σ Positionen = {format_de_decimal(actual)} € vs. "
+        f"Nettosumme lt. Dokument = {format_de_decimal(check.expected)} € "
+        f"(Differenz {format_de_decimal(diff)} €) — Positionen manuell gegen das PDF prüfen"
+    )
 
 
 def _estimate_rows(text: str) -> int:
@@ -290,13 +344,19 @@ def _column_sums(offer: OfferDocument) -> dict[str, Decimal]:
 
 def _effective_sonderpreis(offer: OfferDocument) -> Decimal | None:
     """Return the Sonderpreis (negotiated final price) to display, deriving from
-    preisnachlass if no explicit sonderpreis is set. Returns None when neither is present."""
+    preisnachlass if no explicit sonderpreis is set. Returns None when neither is present.
+    A final price is by definition positive — OfferTotals normalizes LLM output, but the
+    derived difference can still be nonsense when the extraction is broken, and rendering
+    a negative 'Sonderpreis' would be worse than rendering none."""
     totals = offer.totals
+    candidate: Decimal | None = None
     if totals.sonderpreis is not None:
-        return totals.sonderpreis
-    if totals.preisnachlass and totals.nettosumme is not None:
-        return totals.nettosumme - totals.preisnachlass
-    return None
+        candidate = totals.sonderpreis
+    elif totals.preisnachlass and totals.nettosumme is not None:
+        candidate = totals.nettosumme - totals.preisnachlass
+    if candidate is not None and candidate <= 0:
+        return None
+    return candidate
 
 
 def _category_split(pos: Position, line_total: Decimal) -> tuple[float, float, float]:
@@ -405,10 +465,12 @@ def _build_cell_style_xml(
     underline: bool = False,
     wrap: bool = False,
     valign: str = "middle",
+    color: str | None = None,
 ) -> str:
     data_attr = f' style:data-style-name="{data_style}"' if data_style else ""
     bg_attr = f' fo:background-color="{background}"' if background else ""
     wrap_attr = ' fo:wrap-option="wrap"' if wrap else ""
+    color_attr = f' fo:color="{color}"' if color else ""
     underline_attrs = (
         ' style:text-underline-style="solid" style:text-underline-width="auto"'
         ' style:text-underline-color="font-color"'
@@ -425,7 +487,7 @@ def _build_cell_style_xml(
         # Explicit de_DE locale prevents LibreOffice from falling back to the user's UI
         # locale when formatting numbers / currency / percentage.
         '<style:text-properties style:font-name="Arial" fo:font-size="10pt" '
-        f'fo:font-weight="{weight}" fo:language="de" fo:country="DE"{underline_attrs}/>'
+        f'fo:font-weight="{weight}" fo:language="de" fo:country="DE"{color_attr}{underline_attrs}/>'
         '</style:style>'
     )
 
@@ -456,6 +518,7 @@ def _ensure_custom_styles(doc: Document) -> None:
         S_SPP_NUM: dict(halign="center", weight="bold", data_style=S_NUMSTYLE_EUR),
         S_PCT: dict(halign="center", data_style=S_NUMSTYLE_PCT),
         S_NARRATIVE: dict(halign="start", valign="top", wrap=True),
+        S_WARN: dict(halign="start", weight="bold", background=LIGHT_RED, color=WARN_RED, wrap=True),
     }
     for name, opts in custom.items():
         if name in existing:

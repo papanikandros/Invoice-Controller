@@ -37,3 +37,6 @@ tests/fixtures/
 /*.odt
 # Internal planning/analysis doc — dense with real client data, kept local
 PLAN.md
+
+# Local reference material — not part of the tool
+Literature/
