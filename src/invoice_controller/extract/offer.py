@@ -47,6 +47,26 @@ def kind_from_filename(path: Path) -> DocumentKind | None:
     return None
 
 
+_INKLUSIVE_RE = re.compile(r"\binkl(usive|\.)?\b", re.IGNORECASE)
+
+
+def unflag_inklusive_positions(positions: list[Position]) -> list[Position]:
+    """Deterministic rule (consultant-approved): a 0,00-€ line marked 'inklusive' is part
+    of the binding scope at no extra cost — there is nothing to drop, so it is never an
+    optional position (a parenthesized value like 'inklusive (6.175,00 EUR)' is the vendor
+    showing what the freebie would be worth, not an option price). Pins a field the LLM
+    otherwise flaps on between temperature-0 runs."""
+    for p in positions:
+        if (
+            p.optional
+            and p.line_total_net == 0
+            and _INKLUSIVE_RE.search(f"{p.description} {p.optional_reason or ''}")
+        ):
+            p.optional = False
+            p.optional_reason = None
+    return positions
+
+
 _DISCOUNT_LABEL_RE = re.compile(r"rabatt|nachlass|skonto", re.IGNORECASE)
 _DISCOUNT_TOLERANCE = Decimal("0.02")
 
@@ -118,6 +138,8 @@ def extract_offer(
     # Filename is the primary signal; the LLM's classification is the fallback when the
     # filename is uninformative.
     kind = kind_from_filename(path) or doc_type
+
+    positions = unflag_inklusive_positions(positions)
 
     if kind is DocumentKind.STATEMENT:
         cross_sum = check_statement(positions)
