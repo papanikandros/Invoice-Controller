@@ -2,7 +2,62 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from invoice_controller.models import CrossSumCheck, OfferTotals, Position
+from invoice_controller.models import (
+    CrossSumCheck,
+    InvoicePosition,
+    OfferTotals,
+    Position,
+)
+
+
+def check_invoice_positions(
+    positions: list[InvoicePosition],
+    netto: Decimal,
+    *,
+    cumulative_netto: Decimal | None = None,
+    brutto: Decimal | None = None,
+    tolerance: Decimal = Decimal("0.02"),
+) -> CrossSumCheck:
+    """Per-invoice position cross-sum (decided 2026-08-28, applied to EVERY invoice —
+    EEW and BEG): Σ(extracted line items) must reconcile with the invoice's own stated
+    net total, or the invoice is flagged. This is the accuracy guardrail for the
+    OCR/vision path — a misread digit or a dropped line breaks the sum.
+
+    The target is type-aware: a Schlussrechnung's positions typically describe the
+    CUMULATIVE work while its `netto` is the remaining amount after deducted advances,
+    so when `cumulative_netto` is stated, Σ(positions) may match EITHER figure. A Σ
+    that instead matches the stated brutto is called out explicitly — positions were
+    extracted gross, which the consultant must know."""
+    if not positions:
+        return CrossSumCheck(
+            expected=netto,
+            actual=Decimal(0),
+            tolerance=tolerance,
+            passed=False,
+            message="keine Positionen extrahiert — Zeilensummen-Abgleich nicht möglich",
+        )
+
+    total = sum((p.line_total_net for p in positions), Decimal(0))
+    targets: list[tuple[str, Decimal]] = [("Netto", netto)]
+    if cumulative_netto is not None:
+        targets.append(("Gesamt-Netto (Schlussrechnung)", cumulative_netto))
+
+    best_label, best_target = min(targets, key=lambda t: abs(total - t[1]))
+    diff = abs(total - best_target)
+    if diff <= tolerance:
+        return CrossSumCheck(
+            expected=best_target, actual=total, tolerance=tolerance, passed=True
+        )
+
+    message = (
+        f"Σ Positionen = {total} weicht von {best_label} lt. Dokument = {best_target} "
+        f"um {diff} ab"
+    )
+    if brutto is not None and abs(total - brutto) <= tolerance:
+        message += " — Σ entspricht dem BRUTTO-Betrag: Positionen wurden brutto erfasst"
+    return CrossSumCheck(
+        expected=best_target, actual=total, tolerance=tolerance, passed=False, message=message
+    )
 
 
 def check_statement(

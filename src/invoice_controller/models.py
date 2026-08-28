@@ -161,6 +161,108 @@ class CrossSumCheck(BaseModel):
     message: str | None = None
 
 
+class VatStatus(str, Enum):
+    """How VAT appears on an invoice. Drives the brutto/netto consistency check:
+    STANDARD/REDUCED expect netto × (1+pct) = brutto; TAX_FREE and REVERSE_CHARGE
+    expect brutto = netto (no German VAT charged — e.g. innergemeinschaftliche
+    Lieferung, §13b UStG). UNCLEAR is flagged for the consultant, never guessed."""
+
+    STANDARD = "standard"            # 19 %
+    REDUCED = "reduced"              # 7 %
+    TAX_FREE = "tax_free"            # steuerfrei (e.g. innergemeinschaftliche Lieferung)
+    REVERSE_CHARGE = "reverse_charge"  # §13b UStG — Steuerschuldnerschaft des Leistungsempfängers
+    UNCLEAR = "unclear"
+
+
+class InvoiceType(str, Enum):
+    RECHNUNG = "rechnung"                    # plain invoice
+    ANZAHLUNGSRECHNUNG = "anzahlung"         # down payment at order
+    TEILRECHNUNG = "teilrechnung"            # partial / Abschlagsrechnung at milestone
+    SCHLUSSRECHNUNG = "schlussrechnung"      # final invoice
+    GUTSCHRIFT = "gutschrift"                # credit note — amounts are negative
+
+
+class AmountCheck(BaseModel):
+    """The invoice-side analogue of the offer cross-sum: an internal redundancy check
+    over the stated amounts (netto + MwSt = brutto; MwSt ≈ netto × pct). Failure never
+    blocks the pipeline — it flags the row for the consultant, same as F1."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    passed: bool
+    message: str | None = None
+
+
+class InvoicePosition(BaseModel):
+    """One line item of an invoice (decided 2026-08-28: EVERY invoice — F2/EEW and
+    BEG alike — is extracted position-level, and Σ(positions) is cross-summed against
+    the stated total). Leaner than the offer `Position`: invoices have no optional
+    positions and no Kostenkategorie; a line total is always required (negative for
+    discount/credit lines)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    pos: str = ""
+    description: str
+    qty: Decimal | None = None
+    unit: str | None = None
+    unit_price_net: Decimal | None = None
+    line_total_net: Decimal
+    source_page: int | None = None
+
+    @field_validator("description")
+    @classmethod
+    def _cap_description(cls, v: str) -> str:
+        return _truncate_name(v)
+
+
+class InvoiceDocument(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_path: Path
+    vendor_name: str
+    vendor_address: str | None = None
+    recipient_name: str | None = None
+    recipient_address: str | None = None
+    invoice_number: str
+    invoice_date: date
+    order_ref: str | None = Field(
+        default=None, description="Auftrags-/Bestellnummer referenced by the invoice"
+    )
+    order_date: date | None = Field(
+        default=None, description="Date of the Auftragsbestätigung/Bestellung — feeds 'Auftrag erteilt am'"
+    )
+    invoice_type: InvoiceType = InvoiceType.RECHNUNG
+    subject: str | None = Field(
+        default=None, description="Short Verwendungszweck like 'Werksverrohrung' or 'Kältemaschine'"
+    )
+    # The authoritative figure: the netto amount payable for THIS invoice. For a
+    # Schlussrechnung this is the remaining amount after deducted Abschläge, not the
+    # cumulative project total. Negative for a Gutschrift.
+    netto: Decimal
+    mwst_pct: Decimal | None = None
+    mwst_amount: Decimal | None = None
+    brutto: Decimal | None = None
+    vat_status: VatStatus = VatStatus.STANDARD
+    skonto_pct: Decimal | None = Field(
+        default=None, description="Offered early-payment discount rate (terms, not necessarily taken)"
+    )
+    skonto_deadline: date | None = None
+    # Schlussrechnung audit trail: the cumulative project netto and the sum of prior
+    # advances the invoice deducts. `netto` above stays the own remaining amount.
+    cumulative_netto: Decimal | None = None
+    deducted_advances_netto: Decimal | None = None
+    # Position-level extraction (2026-08-28): every invoice's line items, verified by
+    # `position_check` — Σ(positions) against the stated netto (cumulative_netto for a
+    # Schlussrechnung with deducted advances). The stated netto stays authoritative for
+    # every downstream figure; positions are the verification layer (and the substrate
+    # for BEG per-position eligibility).
+    positions: list[InvoicePosition] = Field(default_factory=list)
+    position_check: CrossSumCheck | None = None
+    amount_check: AmountCheck
+    extraction_method: str = "pdfplumber+llm"
+
+
 class OfferDocument(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
