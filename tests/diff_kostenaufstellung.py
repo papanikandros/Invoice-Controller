@@ -14,7 +14,8 @@ import sys
 from decimal import Decimal
 from pathlib import Path
 
-from tests.ods_inspect import OfferBlock, read_kostenaufstellung
+from tests.ods_inspect import OfferBlock
+from tests.ods_inspect import read_kostenaufstellung_any as read_kostenaufstellung
 
 
 def _block_total(block: OfferBlock) -> Decimal:

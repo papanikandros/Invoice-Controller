@@ -1,5 +1,6 @@
 """F3 — client company Standortbeschreibung (Antrag section 1.2) from the website + geo."""
 
+from .docx import write_standort_docx
 from .fragenkatalog import (
     Fragenkatalog,
     find_fragenkatalog,
@@ -14,7 +15,6 @@ from .models import (
     StandortInput,
     Verfahren,
 )
-from .odt import write_standort_odt
 
 __all__ = [
     "CompanyProfile",
@@ -27,5 +27,5 @@ __all__ = [
     "fragenkatalog_to_input",
     "generate_standort",
     "parse_fragenkatalog",
-    "write_standort_odt",
+    "write_standort_docx",
 ]

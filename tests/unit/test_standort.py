@@ -1,4 +1,4 @@
-"""F3 Standortbeschreibung — assembly, input parsing, geo (offline), .odt writer.
+"""F3 Standortbeschreibung — assembly, input parsing, geo (offline), .docx writer.
 
 No network/LLM: the scrape + profile extraction are stubbed via injected
 CompanyProfile/GeoInfo, so these are fast and deterministic. The 6 shipped
@@ -13,6 +13,7 @@ import pytest
 
 from invoice_controller.geo import GeoInfo, offline_geo
 from invoice_controller.standort.assemble import assemble_standort
+from invoice_controller.standort.docx import write_standort_docx
 from invoice_controller.standort.generate import generate_standort
 from invoice_controller.standort.input_md import parse_expected_text, parse_header
 from invoice_controller.standort.models import (
@@ -21,7 +22,6 @@ from invoice_controller.standort.models import (
     StandortInput,
     Verfahren,
 )
-from invoice_controller.standort.odt import write_standort_odt
 
 EXAMPLES = Path(__file__).resolve().parents[2] / "examples"
 MD_PROJECTS = ["Dannemann", "Jacob", "KRR", "Meyring", "WHW", "ZePa"]
@@ -174,16 +174,16 @@ def test_generate_with_injected_profile_and_geo():
     assert res.review_notes
 
 
-# ---- .odt writer ----------------------------------------------------------
+# ---- .docx writer ---------------------------------------------------------
 
-def test_write_odt(tmp_path):
-    from odfdo import Document
+def test_write_docx(tmp_path):
+    from docx import Document
 
     inp = parse_header(EXAMPLES / "ZePa" / "Beschreibung Standort.md")
     res = assemble_standort(inp, _profile(), _geo())
-    out = write_standort_odt(res, inp, tmp_path / "zepa.odt")
+    out = write_standort_docx(res, inp, tmp_path / "zepa.docx")
     assert out.exists()
     doc = Document(str(out))
-    body_text = "\n".join(p.text_recursive for p in doc.body.get_paragraphs())
+    body_text = "\n".join(p.text for p in doc.paragraphs)
     assert "Zepa GmbH" in body_text
     assert "aus dem Bereich der Metallbearbeitung" in body_text

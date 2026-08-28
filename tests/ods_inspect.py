@@ -79,56 +79,108 @@ def _expand_row(row_elem: ET.Element) -> OdsRow:
     return OdsRow(cells=cells)
 
 
+def _blocks_from_rows(rows: list[OdsRow]) -> list[OfferBlock]:
+    """Shared block detection over a first sheet's rows — used by the .ods and .xlsx
+    readers so both formats normalise to the same OfferBlock structures."""
+    blocks: list[OfferBlock] = []
+    current: OfferBlock | None = None
+
+    for row in rows:
+        first_text = row.text_at(0)
+
+        if first_text and SOLL_HEADER_RE.match(first_text):
+            if current is not None:
+                blocks.append(current)
+            current = OfferBlock(soll_header=first_text)
+            continue
+
+        if current is None:
+            continue
+
+        if first_text.lower().startswith("position") or first_text == "Position":
+            continue
+
+        if first_text.startswith(("Σ", "Sum", "Gesamtpreis")):
+            current.row_sum = row
+            continue
+
+        if first_text.startswith("⚠"):
+            current.row_warning = row
+            continue
+
+        if not first_text and row.text_at(1).startswith("Nettosumme lt. Dokument"):
+            current.row_document_total = row
+            continue
+
+        # A position row always carries a pos label in column 0. Numeric labels
+        # ("1", "1-9") and non-numeric optional labels ("E1", "O1" for Eventual-/
+        # Optionalpositionen) both count. The Sonderpreis and percentage rows leave
+        # column 0 empty, so an empty first cell is never a position.
+        if first_text:
+            current.rows_positions.append(row)
+
+    if current is not None:
+        blocks.append(current)
+
+    return blocks
+
+
 def read_kostenaufstellung(path: Path) -> list[OfferBlock]:
     """Read an .ods and return a list of OfferBlock, one per vendor block detected by SOLL header."""
     with zipfile.ZipFile(path) as z:
         content = z.read("content.xml")
     root = ET.fromstring(content)
 
-    blocks: list[OfferBlock] = []
-    current: OfferBlock | None = None
-
     # Only the first sheet is the Kostenaufstellung cost table; later sheets (e.g.
     # Kostenbeschreibung) reuse the SOLL header rows for prose and must not be parsed as
     # cost blocks.
+    rows: list[OdsRow] = []
     tables = list(root.iter(NS_T + "table"))
     for table in tables[:1]:
         for row_elem in table.iter(NS_T + "table-row"):
-            row = _expand_row(row_elem)
-            first_text = row.text_at(0)
+            rows.append(_expand_row(row_elem))
+    return _blocks_from_rows(rows)
 
-            if first_text and SOLL_HEADER_RE.match(first_text):
-                if current is not None:
-                    blocks.append(current)
-                current = OfferBlock(soll_header=first_text)
-                continue
 
-            if current is None:
-                continue
+def read_kostenaufstellung_xlsx(path: Path) -> list[OfferBlock]:
+    """Read the .xlsx Kostenaufstellung (template/xlsx.py output) into the same
+    OfferBlock structures. Formula cells carry `formula` but no `value` — openpyxl
+    stores no cached results, so Σ assertions must recompute from the position rows."""
+    import openpyxl
 
-            if first_text.lower().startswith("position") or first_text == "Position":
-                continue
+    wb = openpyxl.load_workbook(path)
+    ws = wb.worksheets[0]
+    rows: list[OdsRow] = []
+    for xl_row in ws.iter_rows(min_col=1, max_col=8):
+        cells: list[OdsCell] = []
+        for c in xl_row:
+            v = c.value
+            if v is None:
+                cells.append(OdsCell(text=""))
+            elif isinstance(v, str) and v.startswith("="):
+                cells.append(OdsCell(text="", value=None, formula=v))
+            elif isinstance(v, str):
+                cells.append(OdsCell(text=v))
+            else:
+                try:
+                    cells.append(OdsCell(text="", value=Decimal(str(v))))
+                except InvalidOperation:
+                    cells.append(OdsCell(text=str(v)))
+        rows.append(OdsRow(cells=cells))
+    return _blocks_from_rows(rows)
 
-            if first_text.startswith(("Σ", "Sum", "Gesamtpreis")):
-                current.row_sum = row
-                continue
 
-            if first_text.startswith("⚠"):
-                current.row_warning = row
-                continue
+def read_kostenaufstellung_any(path: Path) -> list[OfferBlock]:
+    """Dispatch by suffix — ground truths stay .ods, tool output is .xlsx since 2026-08-28."""
+    if path.suffix.lower() == ".xlsx":
+        return read_kostenaufstellung_xlsx(path)
+    return read_kostenaufstellung(path)
 
-            if not first_text and row.text_at(1).startswith("Nettosumme lt. Dokument"):
-                current.row_document_total = row
-                continue
 
-            # A position row always carries a pos label in column 0. Numeric labels
-            # ("1", "1-9") and non-numeric optional labels ("E1", "O1" for Eventual-/
-            # Optionalpositionen) both count. The Sonderpreis and percentage rows leave
-            # column 0 empty, so an empty first cell is never a position.
-            if first_text:
-                current.rows_positions.append(row)
-
-    if current is not None:
-        blocks.append(current)
-
-    return blocks
+def block_positions_sum(block: OfferBlock, col: int) -> Decimal:
+    """Σ over the block's position rows for one money column — the machine-side stand-in
+    for the Σ row's live formula (which has no cached value in the .xlsx)."""
+    return sum(
+        (r.value_at(col) or Decimal(0) for r in block.rows_positions),
+        Decimal(0),
+    )

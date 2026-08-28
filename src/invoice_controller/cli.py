@@ -1,3 +1,15 @@
+"""CLI — one sub-app per funding-program family (renamed 2026-08-28).
+
+The program is always the user's first token; procedures nest under it:
+
+    invoice-controller eew cost-estimation <path>       (was: f1)
+    invoice-controller eew vne-generation <project>     (was: f2)
+    invoice-controller eew location-description <dir>   (was: f3)
+    invoice-controller beg vne-generation <project>     (F4)
+
+`f1`/`f2`/`f3` remain as hidden deprecated aliases.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -7,53 +19,42 @@ from dotenv import load_dotenv
 from rich.console import Console
 from rich.table import Table as RichTable
 
+from invoice_controller.extract.classify import DocClass, classify_folder
 from invoice_controller.extract.offer import extract_offer
 from invoice_controller.models import DocumentKind
 from invoice_controller.normalize import format_de_decimal
-from invoice_controller.template.ods import write_kostenaufstellung
+from invoice_controller.template.xlsx import write_kostenaufstellung
 
 load_dotenv()
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
+eew_app = typer.Typer(no_args_is_help=True, help="EEW Modul 4 procedures")
+beg_app = typer.Typer(no_args_is_help=True, help="BEG procedures (Effizienzhaus / Einzelmaßnahmen)")
+app.add_typer(eew_app, name="eew")
+app.add_typer(beg_app, name="beg")
 console = Console()
 
 
-DEFAULT_OUTPUT_NAME = "Kostenaufstellung.ods"
+DEFAULT_OUTPUT_NAME = "Kostenaufstellung.xlsx"
 
 
-# Filenames F1 must never treat as an offer, so a per-project folder can hold the
-# intake form, the tool's own outputs, and invoices/credit notes alongside the offers:
-#   - the Fragenkatalog intake form and F1/F2/F3 generated artifacts
-#   - invoices (consultant convention: filename starts "Rg " / "Rg_") and Gutschriften
-#   - the BAFA Verwendungsnachweis forms (eewvn_/qstvn_)
-_NON_OFFER_PATTERNS = (
-    "fragenkatalog", "kostenaufstellung", "vne-tabelle", "vne tabelle",
-    "standortbeschreibung", "gutschrift", "rechnung", "eewvn", "qstvn",
-)
-_INVOICE_PREFIXES = ("rg ", "rg_")  # e.g. "Rg 2024-001 …", "Rg_Muster …"
-
-
-def _is_offer_pdf(name: str) -> bool:
-    low = name.strip().lower()
-    if low.startswith(_INVOICE_PREFIXES):
-        return False
-    return not any(pat in low for pat in _NON_OFFER_PATTERNS)
-
-
-def _collect_pdfs(path: Path) -> list[Path]:
+def _collect_offer_pdfs(path: Path) -> list[Path]:
+    """Offer inputs for cost-estimation: an explicit single file is honoured as-is; a
+    directory is classified (2026-08-28: the shared classifier replaced the old
+    filename deny-list) and only offer-classified PDFs enter the run."""
     if not path.exists():
         raise typer.BadParameter(f"{path} does not exist")
     if path.is_file():
         if path.suffix.lower() != ".pdf":
             raise typer.BadParameter(f"{path} is not a PDF")
         return [path]  # explicit single file: honour the user's choice
-    all_pdfs = sorted(path.glob("*.pdf"))
-    pdfs = [p for p in all_pdfs if _is_offer_pdf(p.name)]
-    skipped = [p for p in all_pdfs if not _is_offer_pdf(p.name)]
+    classified = [c for c in classify_folder(path, recursive=False) if c.path.suffix.lower() == ".pdf"]
+    pdfs = [c.path for c in classified if c.doc_class is DocClass.OFFER]
+    skipped = [c for c in classified if c.doc_class is not DocClass.OFFER]
     if skipped:
         console.print(
             f"[dim]Skipping {len(skipped)} non-offer PDF(s): "
-            f"{', '.join(p.name for p in skipped)}[/dim]"
+            f"{', '.join(f'{c.path.name} ({c.doc_class.value})' for c in skipped)}[/dim]"
         )
     if not pdfs:
         raise typer.BadParameter(f"no offer PDFs found in {path}")
@@ -61,24 +62,23 @@ def _collect_pdfs(path: Path) -> list[Path]:
 
 
 def _default_output_for(path: Path) -> Path:
-    """Place the output .ods alongside the offers — inside the directory if `path` is a
-    directory, or alongside the PDF if `path` is a single file."""
+    """Place the output workbook alongside the offers — inside the directory if `path`
+    is a directory, or alongside the PDF if `path` is a single file."""
     parent = path if path.is_dir() else path.parent
     return parent / DEFAULT_OUTPUT_NAME
 
 
-@app.command()
-def f1(
+def cost_estimation(
     path: Path = typer.Argument(..., help="Single offer PDF or directory of PDFs"),
     output: Path | None = typer.Option(
         None,
         "--output",
         "-o",
-        help="Output .ods path. Defaults to <offer-folder>/Kostenaufstellung.ods.",
+        help="Output .xlsx path. Defaults to <offer-folder>/Kostenaufstellung.xlsx.",
     ),
 ) -> None:
-    """F1 — extract offers and write Kostenaufstellung.ods."""
-    pdfs = _collect_pdfs(path)
+    """EEW cost-estimation (F1) — extract offers and write Kostenaufstellung.xlsx."""
+    pdfs = _collect_offer_pdfs(path)
     if output is None:
         output = _default_output_for(path)
     console.print(f"[bold]Processing {len(pdfs)} offer PDF(s)[/bold]")
@@ -139,25 +139,104 @@ def f1(
     if failed:
         console.print(
             f"[bold red]⚠ {len(failed)} Block/Blöcke ohne Kreuzsummen-Abgleich[/bold red] — "
-            "im .ods rot markiert, Positionen manuell gegen das PDF prüfen: "
+            "im .xlsx rot markiert, Positionen manuell gegen das PDF prüfen: "
             + ", ".join(o.source_path.name for o in failed)
         )
 
 
-@app.command()
-def f2(
-    project_dir: Path = typer.Argument(..., help="Project directory with angebote/ and rechnungen/"),
+def vne_generation(
+    project_dir: Path = typer.Argument(..., help="Project folder with offers + invoices (+ optional projekt.yaml)"),
+    output: Path | None = typer.Option(None, "--output", "-o", help="Output .xlsx (default: VNE-Tabelle.xlsx in the folder)"),
 ) -> None:
-    """F2 — extract offers + invoices, match, write Kontrollmappe.ods. (not yet implemented)"""
-    raise typer.Exit(code=2)
+    """EEW vne-generation (F2) — classify folder, extract invoices, split by F1 ratios, write VNE-Tabelle.xlsx."""
+    from invoice_controller.config import load_project_config
+    from invoice_controller.extract.vne import build_vne_tabelle
+    from invoice_controller.vne.xlsx import write_vne_tabelle
+
+    config = load_project_config(project_dir / "projekt.yaml")
+    if config.client is None:
+        console.print("[yellow]ⓘ kein projekt.yaml[/yellow] — Zeitraum-/Adressprüfung und Förderbetrag-Block entfallen")
+
+    result = build_vne_tabelle(
+        project_dir, config,
+        on_progress=lambda msg: console.print(f"[cyan]→ {msg}[/cyan]"),
+    )
+
+    if result.ratio_source == "none":
+        console.print(
+            "[bold red]⚠ Keine IK/NK-Anteile verfügbar[/bold red]: weder eine Kostenaufstellung "
+            "(.xlsx/.ods/PDF) noch Angebots-PDFs im Ordner gefunden. Alle Rechnungen werden ohne "
+            "Aufteilung rot markiert — erst cost-estimation laufen lassen oder Angebote in den Ordner legen."
+        )
+    elif result.ratio_source == "f1-live":
+        console.print(
+            "[yellow]ⓘ Keine vorhandene Kostenaufstellung gefunden[/yellow] — F1-Extraktion lief "
+            "live über die Angebots-PDFs (unverifizierte Anteile; Kostenaufstellung prüfen)."
+        )
+
+    tbl = RichTable(title="VNE-Tabelle — Rechnungen", title_style="bold")
+    tbl.add_column("Empfänger")
+    tbl.add_column("Rg-Nr.")
+    tbl.add_column("Datum")
+    tbl.add_column("Netto", justify="right")
+    tbl.add_column("IK", justify="right")
+    tbl.add_column("NK", justify="right")
+    tbl.add_column("EK", justify="right")
+    tbl.add_column("Hinweis")
+    for row in result.invoices:
+        inv = row.invoice
+        hint = "; ".join(row.flags)
+        tbl.add_row(
+            inv.vendor_name[:34],
+            inv.invoice_number,
+            inv.invoice_date.strftime("%d.%m.%Y"),
+            format_de_decimal(inv.netto),
+            format_de_decimal(row.ik_amount) if row.ik_amount else "",
+            format_de_decimal(row.nk_amount) if row.nk_amount else "",
+            format_de_decimal(row.ek_amount) if row.ek_amount else "",
+            f"[red]⚠ {hint}[/red]" if hint else "[green]✓[/green]",
+        )
+    console.print(tbl)
+
+    console.print(
+        f"  Σ IK = {format_de_decimal(result.sum_ik)} €   Σ NK = {format_de_decimal(result.sum_nk)} €   "
+        f"Σ EK = {format_de_decimal(result.sum_ek)} €   (Anteile aus {result.ratio_source})"
+    )
+    for vs in result.vendor_summaries:
+        if vs.variance is not None:
+            color = "green" if abs(vs.variance) < 1 else "yellow"
+            console.print(
+                f"  [{color}]{vs.vendor}: Rechnungen {format_de_decimal(vs.invoiced_netto)} € vs. "
+                f"Angebot {format_de_decimal(vs.offer_sonderpreis or vs.offer_gesamt)} € "
+                f"(Δ {format_de_decimal(vs.variance)} €)[/{color}]"
+            )
+    if result.ignored:
+        console.print("[yellow]ⓘ ignoriert (keine Rechnung):[/yellow] " + ", ".join(p.name for p in result.ignored))
+    # Per-invoice position cross-sum (2026-08-28): the F1-style per-file verdict.
+    pos_failed = [
+        r for r in result.invoices
+        if r.invoice.position_check is not None and not r.invoice.position_check.passed
+    ]
+    if pos_failed:
+        console.print(
+            f"[bold red]✗ {len(pos_failed)} Rechnung(en) ohne Positions-Kreuzsummen-Abgleich[/bold red]: "
+            + ", ".join(r.invoice.source_path.name for r in pos_failed)
+        )
+    flagged = [r for r in result.invoices if r.flags]
+    if flagged:
+        console.print(f"[bold red]⚠ {len(flagged)} Rechnung(en) mit Prüf-Hinweisen[/bold red] — im .xlsx rot markiert")
+
+    if output is None:
+        output = project_dir / "VNE-Tabelle.xlsx"
+    write_vne_tabelle(result, config, output)
+    console.print(f"\n[bold green]→ Wrote[/bold green] {output}")
 
 
-@app.command()
-def f3(
+def location_description(
     project_dir: Path = typer.Argument(
         None, help="Project folder containing a 'Fragenkatalog Modul 4' PDF (writes into it)"
     ),
-    output: Path = typer.Option(None, "--output", "-o", help="Output .odt (default: <project>/Standortbeschreibung.odt)"),
+    output: Path = typer.Option(None, "--output", "-o", help="Output .docx (default: <project>/Standortbeschreibung.docx)"),
     url: str = typer.Option(None, "--url", help="Client website URL to scrape"),
     input_md: Path = typer.Option(
         None, "--input", "-i", help="'Beschreibung Standort.md'-style header file (ad-hoc)"
@@ -172,16 +251,17 @@ def f3(
     schicht: int = typer.Option(None, "--schicht", help="Shift count override (1/2/3 → hours)"),
     offline: bool = typer.Option(False, "--offline", help="Skip OSM lookups (Kreis/roads)"),
 ) -> None:
-    """F3 — generate the client Standortbeschreibung (Antrag section 1.2) as an .odt.
+    """EEW location-description (F3) — generate the client Standortbeschreibung (Antrag section 1.2) as a .docx.
 
-    Preferred: `f3 <project_dir>` reads the project's 'Fragenkatalog Modul 4' PDF and writes
-    Standortbeschreibung.odt into that folder. Also accepts --input <md> or --firma/... for ad-hoc runs.
+    Preferred: pass a <project_dir> containing the filled 'Fragenkatalog Modul 4' PDF; the
+    Standortbeschreibung.docx is written into that folder. Also accepts --input <md> or
+    --firma/... for ad-hoc runs.
     """
     from invoice_controller.standort import (
         OperationalDefaults,
         StandortInput,
         generate_standort,
-        write_standort_odt,
+        write_standort_docx,
     )
     from invoice_controller.standort.fragenkatalog import (
         find_fragenkatalog,
@@ -199,7 +279,7 @@ def f3(
         console.print(f"  [dim]Fragenkatalog:[/dim] {fk_pdf.name}")
         inp = fragenkatalog_to_input(parse_fragenkatalog(fk_pdf), website=url)
         if output is None:
-            output = project_dir / "Standortbeschreibung.odt"
+            output = project_dir / "Standortbeschreibung.docx"
     elif input_md is not None:
         inp = parse_header(input_md, website=url)
     elif firma:
@@ -217,15 +297,92 @@ def f3(
         inp.website = url
 
     described = inp.betreiberfirma or inp.firma
-    console.print(f"[bold]F3[/bold] Standortbeschreibung — {described} ({inp.plz} {inp.stadt})")
+    console.print(f"[bold]location-description[/bold] — {described} ({inp.plz} {inp.stadt})")
     if not inp.website:
         console.print("  [yellow]⚠ no website URL — company profile will be empty[/yellow]")
 
     result = generate_standort(inp, online=not offline)
-    write_standort_odt(result, inp, output)
+    write_standort_docx(result, inp, output)
     console.print(f"[bold green]→ Wrote[/bold green] {output}")
     for note in result.review_notes:
         console.print(f"  [yellow]⚠ {note}[/yellow]")
+
+
+def beg_vne_generation(
+    project_dir: Path = typer.Argument(..., help="BEG project folder (invoices, EKK documents, Zahlungsnachweise)"),
+) -> None:
+    """BEG vne-generation (F4) — classify the project and extract the funding parameters.
+
+    Build stage B1: document classification + FundingMeta extraction. The
+    Kostenzusammenstellung writer follows in stage B5.
+    """
+    from invoice_controller.beg.funding import extract_funding_meta
+
+    if not project_dir.is_dir():
+        raise typer.BadParameter(f"{project_dir} is not a directory")
+
+    classified = classify_folder(project_dir)
+    tbl = RichTable(title=f"BEG — {project_dir.name}: {len(classified)} Dokument(e)", title_style="bold")
+    tbl.add_column("Klasse")
+    tbl.add_column("Datei")
+    tbl.add_column("Signal", style="dim")
+    for c in sorted(classified, key=lambda c: (c.doc_class.value, c.path.name)):
+        tbl.add_row(c.doc_class.value, str(c.path.relative_to(project_dir)), c.reason)
+    console.print(tbl)
+
+    funding_docs = [
+        c.path for c in classified
+        if c.doc_class in (DocClass.ANTRAGSBESTAETIGUNG, DocClass.ZUWENDUNGSBESCHEID)
+    ]
+    if not funding_docs:
+        console.print(
+            "[bold red]⚠ Keine Antragsbestätigung / kein Zuwendungsbescheid gefunden[/bold red] — "
+            "Programmdaten (Fördersatz, Vorgangsnummer, Basis) können nicht bestimmt werden."
+        )
+        raise typer.Exit(1)
+
+    console.print(f"\n[cyan]→ Programmdaten aus {len(funding_docs)} Förderdokument(en) extrahieren[/cyan]")
+    meta = extract_funding_meta(funding_docs)
+
+    rows = [
+        ("Programm", f"{meta.program_type.value}" + (f" — {meta.program_label}" if meta.program_label else "")),
+        ("Vorgangsnummer", meta.vorgangsnummer),
+        ("Antrag gestellt", meta.antrag_date.strftime("%d.%m.%Y") if meta.antrag_date else None),
+        ("Zuwendungsbescheid", meta.bescheid_date.strftime("%d.%m.%Y") if meta.bescheid_date else None),
+        ("Antragsteller", meta.antragsteller_name),
+        ("Basis", f"{meta.client_basis.value}" + (f" ({meta.client_basis_reason})" if meta.client_basis_reason else "")),
+        ("Kosten Maßnahmen lt. Antrag", format_de_decimal(meta.geplante_kosten_massnahmen) + " €" if meta.geplante_kosten_massnahmen is not None else None),
+        ("Kosten Baubegleitung lt. Antrag", format_de_decimal(meta.geplante_kosten_baubegleitung) + " €" if meta.geplante_kosten_baubegleitung is not None else None),
+        ("Fördersatz", f"{meta.foerdersatz_pct} % auf {format_de_decimal(meta.foerderfaehige_kosten_cap) + ' €' if meta.foerderfaehige_kosten_cap is not None else '?'}" if meta.foerdersatz_pct is not None else None),
+        ("Fördersatz Baubegleitung", f"{meta.baubegleitung_foerdersatz_pct} % bis {format_de_decimal(meta.baubegleitung_kosten_cap) + ' €' if meta.baubegleitung_kosten_cap is not None else '?'}" if meta.baubegleitung_foerdersatz_pct is not None else None),
+    ]
+    meta_tbl = RichTable(title="Programmdaten (FundingMeta)", title_style="bold")
+    meta_tbl.add_column("Feld")
+    meta_tbl.add_column("Wert")
+    for label, value in rows:
+        meta_tbl.add_row(label, value if value is not None else "[red]fehlt[/red]")
+    console.print(meta_tbl)
+
+    missing = meta.missing_fields()
+    if missing:
+        console.print("[bold red]⚠ fehlende Programmdaten:[/bold red] " + ", ".join(missing))
+
+    console.print(
+        "\n[yellow]ⓘ Kostenzusammenstellung-Writer folgt (Build-Stufe B5)[/yellow] — "
+        "aktuell werden Klassifikation und Programmdaten geprüft."
+    )
+
+
+# --- command registration: program sub-apps + hidden deprecated aliases -----------------
+
+eew_app.command("cost-estimation")(cost_estimation)
+eew_app.command("vne-generation")(vne_generation)
+eew_app.command("location-description")(location_description)
+beg_app.command("vne-generation")(beg_vne_generation)
+
+app.command("f1", hidden=True)(cost_estimation)
+app.command("f2", hidden=True)(vne_generation)
+app.command("f3", hidden=True)(location_description)
 
 
 if __name__ == "__main__":
