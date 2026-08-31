@@ -185,7 +185,7 @@ class InvoiceType(str, Enum):
 class AmountCheck(BaseModel):
     """The invoice-side analogue of the offer cross-sum: an internal redundancy check
     over the stated amounts (netto + MwSt = brutto; MwSt ≈ netto × pct). Failure never
-    blocks the pipeline — it flags the row for the consultant, same as F1."""
+    blocks the pipeline — it flags the row for the consultant, same as cost-estimation."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -194,8 +194,7 @@ class AmountCheck(BaseModel):
 
 
 class InvoicePosition(BaseModel):
-    """One line item of an invoice (decided 2026-08-28: EVERY invoice — F2/EEW and
-    BEG alike — is extracted position-level, and Σ(positions) is cross-summed against
+    """One line item of an invoice (decided 2026-08-28: EVERY invoice — EEW and BEG alike — is extracted position-level, and Σ(positions) is cross-summed against
     the stated total). Leaner than the offer `Position`: invoices have no optional
     positions and no Kostenkategorie; a line total is always required (negative for
     discount/credit lines)."""

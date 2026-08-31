@@ -1,4 +1,4 @@
-"""LLM extraction layer for German invoices (F2).
+"""LLM extraction layer for German invoices (vne-generation).
 
 Same architecture as llm/extract.py for offers: one multimodal agent, typed output,
 temperature 0, tiered input (text or page images). The rule set (I1…I10) mirrors the

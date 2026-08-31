@@ -10,10 +10,10 @@ v1 writes cached VALUES, not live formulas: openpyxl cannot store a formula's
 cached result, so a formula-bearing file would read as empty through any
 `data_only` consumer (including our own ground-truth reader) until the consultant
 recalculates in LibreOffice. Numbers-first beats formulas-first here; live
-formulas are a polish candidate (raw-XML post-pass like the F1 .ods writer).
+formulas are a polish candidate (raw-XML post-pass like the cost-estimation .ods writer).
 
 Every failed check renders as a red-filled row with the ⚠ reason in the
-Anmerkung column — same loud-not-silent rule as the F1 workbook.
+Anmerkung column — same loud-not-silent rule as the cost-estimation workbook.
 """
 
 from __future__ import annotations

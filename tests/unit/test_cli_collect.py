@@ -19,7 +19,7 @@ def test_collect_pdfs_filters_non_offers(tmp_path):
 def test_collect_pdfs_skips_invoices_and_bafa_forms(tmp_path):
     for n in [
         "4. L&R Angebot-SOLL.pdf",
-        "7. Craemer Stellungnahme.pdf",   # statements are valid F1 inputs
+        "7. Craemer Stellungnahme.pdf",   # statements are valid cost-estimation inputs
         "Rg MAFAC_ 1. AR_2341075 _04.05.2023.pdf",
         "Gutschrift MAFAC_2341322_12.05.2003.pdf",
         "eewvn_18747772.pdf",

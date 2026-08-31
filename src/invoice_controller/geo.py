@@ -1,4 +1,4 @@
-"""Deterministic geo lookup for the F3 Standortbeschreibung — no LLM.
+"""Deterministic geo lookup for the location-description Standortbeschreibung — no LLM.
 
 Data classes recovered for the "Standort" paragraph:
   * Bundesland + Regierungsbezirk + coordinates — offline via pgeocode (GeoNames,

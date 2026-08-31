@@ -1,11 +1,11 @@
-"""projekt.yaml — the deliberately-small F2 project configuration.
+"""projekt.yaml — the deliberately-small vne-generation project configuration.
 
 v1 scope (decided 2026-08-24): client name+address, Bewilligungszeitraum, and the
 Bescheid figures for the Förderbetrag block. Nothing else — beantragt figures are
-derived from F1, discounts/ratios always follow the F1 result, and document
+derived from cost-estimation, discounts/ratios always follow the cost-estimation result, and document
 selection is handled by classification, not exclude lists.
 
-A missing projekt.yaml is not an error: F2 runs with the affected outputs degraded
+A missing projekt.yaml is not an error: vne-generation runs with the affected outputs degraded
 (window column blank, Förderbetrag block unfilled) so the corpus projects — which
 ship no yaml — still process end-to-end.
 """

@@ -1,4 +1,4 @@
-"""Typed models for F3 — the client Standortbeschreibung (section 1.2 of the Antrag)."""
+"""Typed models for location-description — the client Standortbeschreibung (section 1.2 of the Antrag)."""
 
 from __future__ import annotations
 
@@ -59,7 +59,7 @@ class OperationalDefaults(BaseModel):
 
 
 class StandortInput(BaseModel):
-    """The per-client input to F3."""
+    """The per-client input to location-description."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -77,7 +77,7 @@ class StandortInput(BaseModel):
 
 
 class Standortbeschreibung(BaseModel):
-    """F3 result: the assembled German text plus the review flags it carries."""
+    """location-description result: the assembled German text plus the review flags it carries."""
 
     model_config = ConfigDict(extra="forbid")
 

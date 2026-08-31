@@ -166,7 +166,7 @@ def _append_offer_block(ws: Worksheet, offer: OfferDocument, start_row: int) -> 
         spp_row = next_row
         _cell(ws, spp_row, 1, None, font=_FONT_BOLD)
         _cell(ws, spp_row, 2, f"Sonderpreis Pos.1 – Pos.{last_pos_label}", font=_FONT_BOLD)
-        # C stays a literal value (not a formula): downstream readers — the F2 ratio
+        # C stays a literal value (not a formula): downstream readers — the vne-generation ratio
         # loader included — must see the negotiated price without a recalc pass.
         _money(ws, spp_row, 3, sonderpreis, font=_FONT_BOLD)
         _cell(ws, spp_row, 4, f"=D{sum_row}", font=_FONT_BOLD, number_format=_EUR)

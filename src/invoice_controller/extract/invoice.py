@@ -1,4 +1,4 @@
-"""Invoice extraction orchestrator (F2): pdf → (text | OCR | vision) → LLM → checks.
+"""Invoice extraction orchestrator (vne-generation): pdf → (text | OCR | vision) → LLM → checks.
 
 Identical tiering to extract/offer.py — the OCR path is keyed on "no text layer",
 and 35 % of the close-out corpus invoices are scans, so the fallback chain is not

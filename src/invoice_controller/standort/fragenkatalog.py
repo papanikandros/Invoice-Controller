@@ -1,4 +1,4 @@
-"""Parse the consultant's 'Fragenkatalog Modul 4' intake PDF into F3 inputs.
+"""Parse the consultant's 'Fragenkatalog Modul 4' intake PDF into location-description inputs.
 
 The form's filled values live in AcroForm fields with opaque names, and pdfplumber
 drops them; `pdftotext -layout` renders every value next to its label (and the ✓
@@ -7,7 +7,7 @@ the consultant's stable house template, so label-anchored parsing is reliable.
 
 Supplies firma, address, the separate measure location (preferred for geo), the
 Betriebsgesellschaft (Untervermieter), company size (KU/MU/GU → klein/mittel/groß)
-and the shift model — the last two replacing F3's earlier LLM/flagged guesses.
+and the shift model — the last two replacing location-description's earlier LLM/flagged guesses.
 """
 
 from __future__ import annotations
@@ -167,7 +167,7 @@ def parse_fragenkatalog(path: str | Path) -> Fragenkatalog:
 
 
 def fragenkatalog_to_input(fk: Fragenkatalog, *, website: str | None = None) -> StandortInput:
-    """Build the F3 input.
+    """Build the location-description input.
 
     The described company is the **Antragstellendes Unternehmen** (the applicant), not the
     Betriebsgesellschaft — the Betriebsgesellschaft field is captured on `fk` for reference

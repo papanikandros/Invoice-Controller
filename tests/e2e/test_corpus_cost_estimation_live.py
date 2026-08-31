@@ -1,6 +1,6 @@
-"""Live F1 regression against the 10-project close-out corpus.
+"""Live cost-estimation regression against the 10-project close-out corpus.
 
-For each project we run the real F1 pipeline on the vendor offer PDFs and check
+For each project we run the real cost-estimation pipeline on the vendor offer PDFs and check
 the extraction against the consultant's hand-built Kostenaufstellung (recovered
 by tests/corpus/kostenaufstellung.py):
 
@@ -9,10 +9,10 @@ by tests/corpus/kostenaufstellung.py):
     block totals.
 
 The IK/NK split ratio is compared loosely and reported, not hard-asserted: the
-consultant overrides F1's LLM classification during review, so the ratio is a
+consultant overrides cost-estimation's LLM classification during review, so the ratio is a
 proposal, whereas the net total is the faithful-extraction contract.
 
-Run: `uv run pytest tests/e2e/test_corpus_f1_live.py --run-live`  (costs API money)
+Run: `uv run pytest tests/e2e/test_corpus_cost_estimation_live.py --run-live`  (costs API money)
 """
 
 from __future__ import annotations
@@ -56,12 +56,12 @@ def _ik_nk(offer) -> tuple[Decimal, Decimal]:
 
 @live
 @pytest.mark.parametrize("pid", PROJECT_IDS)
-def test_f1_reconciles_to_kostenaufstellung(pid):
+def test_cost_estimation_reconciles_to_kostenaufstellung(pid):
     if not _has_key():
         pytest.skip("no LLM API key set")
 
     proj = load_project(pid)
-    ground = [b for b in parse_kostenaufstellung(proj.f1_pdf).blocks if b.gesamt is not None]
+    ground = [b for b in parse_kostenaufstellung(proj.kostenaufstellung_pdf).blocks if b.gesamt is not None]
     assert ground, f"{pid}: no ground-truth block totals"
     block_totals = [b.gesamt for b in ground]
 

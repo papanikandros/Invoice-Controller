@@ -1,7 +1,7 @@
-"""F2 orchestrator: project folder → classified docs → ratios → invoices → VneResult.
+"""vne-generation orchestrator: project folder → classified docs → ratios → invoices → VneResult.
 
-Ratio source priority (see vne/ratios.py): the verified F1 `Kostenaufstellung.ods`
-first, a consultant-built Kostenaufstellung PDF second, live F1 offer extraction
+Ratio source priority (see vne/ratios.py): the verified cost-estimation `Kostenaufstellung.ods`
+first, a consultant-built Kostenaufstellung PDF second, live cost-estimation offer extraction
 last (the only tier that costs offer-side LLM calls). Invoice extraction always
 runs per invoice-classified PDF; `other` documents are carried through by name so
 the renderer and CLI can report them — classified and visible, never silently
@@ -43,14 +43,14 @@ def build_vne_tabelle(
 
     ratios, ratio_source = load_vendor_ratios(project_dir)
     if not ratios and offers_cls:
-        # No existing Kostenaufstellung — run F1 extraction on the offers (LLM calls).
+        # No existing Kostenaufstellung — run cost-estimation extraction on the offers (LLM calls).
         offers = []
         for c in offers_cls:
             if on_progress:
-                on_progress(f"F1-Extraktion (Angebot): {c.path.name}")
+                on_progress(f"Live-Extraktion (Angebot): {c.path.name}")
             offers.append(extract_offer(c.path, with_narrative=False))
         ratios = from_offer_documents(offers)
-        ratio_source = "f1-live"
+        ratio_source = "live-extraction"
 
     invoices: list[InvoiceDocument] = []
     for c in invoices_cls:

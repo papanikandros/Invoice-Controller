@@ -9,9 +9,9 @@ Implements the sheet semantics recovered from the close-out corpus:
   max. Förderbetrag = Mehrkosten × Kostendeckel-Förderanteil, capped by the
                       Bescheid-Förderbetrag ("lower of")
 
-beantragt IK/NK come from the F1 blocks; beantragt EK = Σ netto of the
+beantragt IK/NK come from the cost-estimation blocks; beantragt EK = Σ netto of the
 consultant's own invoices (decided 2026-08-24). An invoice whose vendor matches
-no F1 block gets NO split — flagged, cells left empty for the consultant.
+no cost-estimation block gets NO split — flagged, cells left empty for the consultant.
 """
 
 from __future__ import annotations
@@ -278,7 +278,7 @@ def compute_vne(
                         f"lt. Schlussrechnung abgezogene {inv.deducted_advances_netto}"
                     )
 
-    # beantragt: IK/NK from the F1 blocks, EK = Σ own invoices (decided 2026-08-24).
+    # beantragt: IK/NK from the cost-estimation blocks, EK = Σ own invoices (decided 2026-08-24).
     # A consultant-own block in the Kostenaufstellung (e.g. a summary section the
     # PDF parser mistook for a vendor) must not inflate the vendor sums.
     vendor_blocks = [r for r in ratios if not is_own_company(r.vendor)]

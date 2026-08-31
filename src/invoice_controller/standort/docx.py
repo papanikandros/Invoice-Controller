@@ -1,4 +1,4 @@
-"""Write the F3 Standortbeschreibung to a .docx (Word) document.
+"""Write the location-description Standortbeschreibung to a .docx (Word) document.
 
 Successor of the .odt writer (format decision 2026-08-28: outputs are
 Microsoft-native because most end users are on Windows). Same document shape:

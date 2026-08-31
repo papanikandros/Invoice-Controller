@@ -1,6 +1,6 @@
 """Per-vendor IK/NK ratios — the `Anteil` column's single source of truth.
 
-The Anteil applied to every invoice of a vendor IS that vendor's F1
+The Anteil applied to every invoice of a vendor IS that vendor's cost-estimation
 Kostenaufstellung percentage row (verified against the close-out corpus: the
 consultant's sheets reference it live via `'[1](INTEREN Kostenaufstellung)'!D…/E…`).
 No override mechanism exists by design — a deviation is the consultant's manual
@@ -8,12 +8,12 @@ edit in the generated result file.
 
 Three sources, in priority order (`load_vendor_ratios`):
 
-  1. `Kostenaufstellung.ods` in the project folder — the F1 output, which the
+  1. `Kostenaufstellung.ods` in the project folder — the cost-estimation output, which the
      consultant has verified and possibly corrected. Free and deterministic.
   2. A consultant-built `Kostenaufstellung*.pdf` (the corpus projects ship these).
-  3. Live F1 offer extraction (costs LLM calls) — the caller passes OfferDocuments.
+  3. Live cost-estimation offer extraction (costs LLM calls) — the caller passes OfferDocuments.
 
-Anteile are renormalized over IK+NK (`ik / (ik + nk)`): an F1 block with a
+Anteile are renormalized over IK+NK (`ik / (ik + nk)`): an cost-estimation block with a
 Nachlass share would otherwise leave part of every invoice netto unallocated.
 """
 
@@ -61,11 +61,11 @@ class VendorRatio:
     header: str                      # full SOLL header for reference/audit
     anteil_ik: Decimal               # renormalized: ik / (ik + nk)
     anteil_nk: Decimal
-    beantragt_ik: Decimal | None     # the F1 block's IK sum (feeds 'beantragt IK')
+    beantragt_ik: Decimal | None     # the cost-estimation block's IK sum (feeds 'beantragt IK')
     beantragt_nk: Decimal | None
-    gesamt: Decimal | None           # F1 block Σ — for per-vendor reconciliation
+    gesamt: Decimal | None           # cost-estimation block Σ — for per-vendor reconciliation
     sonderpreis: Decimal | None
-    source: str                      # "ods" | "pdf" | "f1-live"
+    source: str                      # "ods" | "pdf" | "live-extraction"
 
 
 def _renormalize(ik: Decimal, nk: Decimal) -> tuple[Decimal, Decimal]:
@@ -103,7 +103,7 @@ def vendor_from_header(header: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Source 1 — the F1 Kostenaufstellung .ods (possibly consultant-corrected)
+# Source 1 — the cost-estimation Kostenaufstellung .ods (possibly consultant-corrected)
 # ---------------------------------------------------------------------------
 
 def _cell_texts_and_values(row_elem: ET.Element) -> tuple[list[str], list[Decimal | None]]:
@@ -173,7 +173,7 @@ def from_kostenaufstellung_ods(path: Path) -> list[VendorRatio]:
 
 
 def from_kostenaufstellung_xlsx(path: Path) -> list[VendorRatio]:
-    """Source 1 in the .xlsx era (format decision 2026-08-28): the F1 output is an
+    """Source 1 in the .xlsx era (format decision 2026-08-28): the cost-estimation output is an
     .xlsx whose Σ row holds live formulas WITHOUT cached values, so the block sums are
     recomputed from the position rows. A consultant-saved copy (recalculated by
     Excel/LibreOffice) may carry cached Σ values — those win when present, because the
@@ -268,7 +268,7 @@ def choose_block_figures(
     offers. Candidates in priority order — the Sonderpreis row is the binding
     (discounted) figure when it carries a per-category split (KRR), the Σ money
     row gives cent precision (ZePa) — but a money-derived ratio is only trusted
-    when it AGREES with the printed % row (the canonical F1 ratio row): legacy
+    when it AGREES with the printed % row (the canonical cost-estimation ratio row): legacy
     layouts exist where the money columns don't carry scaled IK/NK (WHW), and
     there the % row wins."""
     pct_ratio: Decimal | None = None
@@ -367,7 +367,7 @@ def from_kostenaufstellung_pdf(path: Path) -> list[VendorRatio]:
 
 
 # ---------------------------------------------------------------------------
-# Source 3 — in-memory F1 results (live extraction)
+# Source 3 — in-memory cost-estimation results (live extraction)
 # ---------------------------------------------------------------------------
 
 def from_offer_documents(offers: list[OfferDocument]) -> list[VendorRatio]:
@@ -393,7 +393,7 @@ def from_offer_documents(offers: list[OfferDocument]) -> list[VendorRatio]:
                 beantragt_nk=nk,
                 gesamt=gesamt,
                 sonderpreis=offer.totals.sonderpreis,
-                source="f1-live",
+                source="live-extraction",
             )
         )
     return ratios
@@ -405,13 +405,13 @@ _STATEMENT_BLOCK_RE = re.compile(r"sch[äa]tzung|stellungnahme|eigenerkl", re.IG
 def is_statement_block(ratio: VendorRatio) -> bool:
     """A SCHÄTZUNG/Stellungnahme block estimates costs for which no vendor offer
     existed at application time — it has no vendor name to match invoices against,
-    but its ratio (typically 100 % NK) is the F1-side split for exactly the
+    but its ratio (typically 100 % NK) is the offer-side split for exactly the
     invoices that later arrive without an offer."""
     return bool(_STATEMENT_BLOCK_RE.search(ratio.header))
 
 
 def find_kostenaufstellung_pdf(project_dir: Path) -> Path | None:
-    """The F1-format PDF is the one carrying the IK/NK percentage split rows;
+    """The cost-estimation-format PDF is the one carrying the IK/NK percentage split rows;
     raw vendor offers with 'Kostenaufstellung' in the name lack them."""
     for p in sorted(project_dir.glob("*.pdf")):
         if "kostenaufstellung" not in p.name.lower():
@@ -427,8 +427,8 @@ def find_kostenaufstellung_pdf(project_dir: Path) -> Path | None:
 def load_vendor_ratios(project_dir: Path) -> tuple[list[VendorRatio], str]:
     """Resolve the best available ratio source for a project folder. Returns
     (ratios, source description). Empty list when neither a Kostenaufstellung
-    (.xlsx/.ods) nor an F1-format PDF exists — the caller then runs live F1
-    extraction or red-flags everything. The .xlsx (current F1 output format) is
+    (.xlsx/.ods) nor an cost-estimation-format PDF exists — the caller then runs live cost-estimation
+    extraction or red-flags everything. The .xlsx (current cost-estimation output format) is
     preferred; the .ods tier remains for projects generated before 2026-08-28."""
     xlsx = project_dir / "Kostenaufstellung.xlsx"
     if xlsx.exists():

@@ -1,4 +1,4 @@
-"""Fetch and extract readable text from the client's website for F3.
+"""Fetch and extract readable text from the client's website for location-description.
 
 Landing page plus a few company-relevant subpages (Über uns / Unternehmen /
 Produkte / Leistungen / Verfahren), main-content extracted via trafilatura and

@@ -1,14 +1,14 @@
-"""Parse the F2 ``VNE-Tabelle`` .xlsx into structured ground truth.
+"""Parse the vne-generation ``VNE-Tabelle`` .xlsx into structured ground truth.
 
-The consultant's VNE-Tabelle is the F2 target artifact. Its working sheet
+The consultant's VNE-Tabelle is the vne-generation target artifact. Its working sheet
 ``(Vorlage VNE-Maske)`` holds a per-invoice table: each invoice occupies 2-3
 rows (an Investitionskosten split row, a Nebenkosten split row, and a Skonto
 row). We recover, per invoice: recipient, dates, window-check flag, brutto,
 netto, netto-after-Skonto, and the IK / NK split amounts — plus the Σ IK / Σ NK
-totals. Those are exactly the columns the F2 test contract asserts.
+totals. Those are exactly the columns the vne-generation test contract asserts.
 
 Per-vendor model: each invoice's netto is split IK/NK by a single ratio for its
-vendor (taken from that vendor's F1 Kostenaufstellung percentage row). This
+vendor (taken from that vendor's cost-estimation Kostenaufstellung percentage row). This
 reader does not re-derive the ratio; it reads what the consultant recorded.
 """
 

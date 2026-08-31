@@ -1,4 +1,4 @@
-"""LLM extraction of a structured CompanyProfile from scraped website text (F3).
+"""LLM extraction of a structured CompanyProfile from scraped website text (location-description).
 
 The LLM only fills the website-derived data class (Branche, Produkte, Sektoren,
 Leistungen, Verfahren, Größe) — the German prose frame is assembled deterministically

@@ -1,4 +1,4 @@
-"""F3 orchestrator: client input (+ website) -> Standortbeschreibung.
+"""location-description orchestrator: client input (+ website) -> Standortbeschreibung.
 
 Pipeline: scrape website -> LLM CompanyProfile -> offline+OSM geo lookup ->
 deterministic template assembly. Scrape/LLM are skippable (profile passed in)

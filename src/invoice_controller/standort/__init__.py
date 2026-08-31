@@ -1,4 +1,4 @@
-"""F3 — client company Standortbeschreibung (Antrag section 1.2) from the website + geo."""
+"""location-description — client company Standortbeschreibung (Antrag section 1.2) from the website + geo."""
 
 from .docx import write_standort_docx
 from .fragenkatalog import (

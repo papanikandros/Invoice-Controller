@@ -2,12 +2,10 @@
 
 The program is always the user's first token; procedures nest under it:
 
-    invoice-controller eew cost-estimation <path>       (was: f1)
-    invoice-controller eew vne-generation <project>     (was: f2)
-    invoice-controller eew location-description <dir>   (was: f3)
-    invoice-controller beg vne-generation <project>     (F4)
-
-`f1`/`f2`/`f3` remain as hidden deprecated aliases.
+    invoice-controller eew cost-estimation <path>
+    invoice-controller eew vne-generation <project>
+    invoice-controller eew location-description <dir>
+    invoice-controller beg vne-generation <project>
 """
 
 from __future__ import annotations
@@ -77,7 +75,7 @@ def cost_estimation(
         help="Output .xlsx path. Defaults to <offer-folder>/Kostenaufstellung.xlsx.",
     ),
 ) -> None:
-    """EEW cost-estimation (F1) — extract offers and write Kostenaufstellung.xlsx."""
+    """EEW cost-estimation — extract offers and write Kostenaufstellung.xlsx."""
     pdfs = _collect_offer_pdfs(path)
     if output is None:
         output = _default_output_for(path)
@@ -148,7 +146,7 @@ def vne_generation(
     project_dir: Path = typer.Argument(..., help="Project folder with offers + invoices (+ optional projekt.yaml)"),
     output: Path | None = typer.Option(None, "--output", "-o", help="Output .xlsx (default: VNE-Tabelle.xlsx in the folder)"),
 ) -> None:
-    """EEW vne-generation (F2) — classify folder, extract invoices, split by F1 ratios, write VNE-Tabelle.xlsx."""
+    """EEW vne-generation — classify folder, extract invoices, split by cost-estimation ratios, write VNE-Tabelle.xlsx."""
     from invoice_controller.config import load_project_config
     from invoice_controller.extract.vne import build_vne_tabelle
     from invoice_controller.vne.xlsx import write_vne_tabelle
@@ -168,9 +166,9 @@ def vne_generation(
             "(.xlsx/.ods/PDF) noch Angebots-PDFs im Ordner gefunden. Alle Rechnungen werden ohne "
             "Aufteilung rot markiert — erst cost-estimation laufen lassen oder Angebote in den Ordner legen."
         )
-    elif result.ratio_source == "f1-live":
+    elif result.ratio_source == "live-extraction":
         console.print(
-            "[yellow]ⓘ Keine vorhandene Kostenaufstellung gefunden[/yellow] — F1-Extraktion lief "
+            "[yellow]ⓘ Keine vorhandene Kostenaufstellung gefunden[/yellow] — Live-Extraktion lief "
             "live über die Angebots-PDFs (unverifizierte Anteile; Kostenaufstellung prüfen)."
         )
 
@@ -212,7 +210,7 @@ def vne_generation(
             )
     if result.ignored:
         console.print("[yellow]ⓘ ignoriert (keine Rechnung):[/yellow] " + ", ".join(p.name for p in result.ignored))
-    # Per-invoice position cross-sum (2026-08-28): the F1-style per-file verdict.
+    # Per-invoice position cross-sum (2026-08-28): the cost-estimation-style per-file verdict.
     pos_failed = [
         r for r in result.invoices
         if r.invoice.position_check is not None and not r.invoice.position_check.passed
@@ -251,7 +249,7 @@ def location_description(
     schicht: int = typer.Option(None, "--schicht", help="Shift count override (1/2/3 → hours)"),
     offline: bool = typer.Option(False, "--offline", help="Skip OSM lookups (Kreis/roads)"),
 ) -> None:
-    """EEW location-description (F3) — generate the client Standortbeschreibung (Antrag section 1.2) as a .docx.
+    """EEW location-description — generate the client Standortbeschreibung (Antrag section 1.2) as a .docx.
 
     Preferred: pass a <project_dir> containing the filled 'Fragenkatalog Modul 4' PDF; the
     Standortbeschreibung.docx is written into that folder. Also accepts --input <md> or
@@ -311,7 +309,7 @@ def location_description(
 def beg_vne_generation(
     project_dir: Path = typer.Argument(..., help="BEG project folder (invoices, EKK documents, Zahlungsnachweise)"),
 ) -> None:
-    """BEG vne-generation (F4) — classify the project and extract the funding parameters.
+    """BEG vne-generation — classify the project and extract the funding parameters.
 
     Build stage B1: document classification + FundingMeta extraction. The
     Kostenzusammenstellung writer follows in stage B5.
@@ -379,10 +377,6 @@ eew_app.command("cost-estimation")(cost_estimation)
 eew_app.command("vne-generation")(vne_generation)
 eew_app.command("location-description")(location_description)
 beg_app.command("vne-generation")(beg_vne_generation)
-
-app.command("f1", hidden=True)(cost_estimation)
-app.command("f2", hidden=True)(vne_generation)
-app.command("f3", hidden=True)(location_description)
 
 
 if __name__ == "__main__":

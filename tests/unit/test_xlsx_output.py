@@ -167,8 +167,8 @@ def test_passed_cross_sum_renders_no_warning(tmp_path: Path) -> None:
     assert block.row_document_total is None
 
 
-def test_f2_ratio_loader_reads_the_xlsx(tmp_path: Path) -> None:
-    """The F2 ratio source must work directly off the fresh .xlsx (no recalc pass):
+def test_vne_ratio_loader_reads_the_xlsx(tmp_path: Path) -> None:
+    """The vne-generation ratio source must work directly off the fresh .xlsx (no recalc pass):
     the loader recomputes the block sums from the position rows."""
     offer = _make_offer(tmp_path)
     out = tmp_path / "Kostenaufstellung.xlsx"

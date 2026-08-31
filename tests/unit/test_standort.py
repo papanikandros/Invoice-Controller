@@ -1,4 +1,4 @@
-"""F3 Standortbeschreibung — assembly, input parsing, geo (offline), .docx writer.
+"""location-description Standortbeschreibung — assembly, input parsing, geo (offline), .docx writer.
 
 No network/LLM: the scrape + profile extraction are stubbed via injected
 CompanyProfile/GeoInfo, so these are fast and deterministic. The 6 shipped
@@ -27,7 +27,7 @@ EXAMPLES = Path(__file__).resolve().parents[2] / "examples"
 MD_PROJECTS = ["Dannemann", "Jacob", "KRR", "Meyring", "WHW", "ZePa"]
 
 # The `Beschreibung Standort.md` fixtures are client-confidential and not shipped;
-# skip the F3 suite gracefully on a fresh clone rather than failing to read them.
+# skip the location-description suite gracefully on a fresh clone rather than failing to read them.
 pytestmark = pytest.mark.skipif(
     not (EXAMPLES / "ZePa" / "Beschreibung Standort.md").exists(),
     reason="confidential Standort fixtures not present (see README)",

@@ -3,7 +3,7 @@
 Replaces manual exclude lists (decided 2026-08-24, extended for BEG 2026-08-28):
 a close-out folder holds far more than offers and invoices — payment proofs,
 Bescheide, application confirmations, Erklärungen, the tool's own outputs.
-Classification is tiered and deterministic-first, mirroring F1's doc-kind
+Classification is tiered and deterministic-first, mirroring cost-estimation's doc-kind
 detection:
 
   1. filename patterns (free, covers the vast majority of the corpus),

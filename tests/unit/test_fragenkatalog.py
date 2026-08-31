@@ -1,4 +1,4 @@
-"""F3 Fragenkatalog parser — against the shipped sample form.
+"""location-description Fragenkatalog parser — against the shipped sample form.
 
 The only filled sample so far is examples/Fragenkatalog Modul 4.pdf (Winkelmann).
 Real per-project Fragenkatalog PDFs are still to be delivered (PLAN.md FK-Q5).

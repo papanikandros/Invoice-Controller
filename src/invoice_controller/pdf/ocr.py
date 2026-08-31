@@ -8,7 +8,7 @@ recovery order, decided with the consultant:
      engine is absent or yields no usable text, we fall through.
   2. CLOUD VISION-LLM — render each page to a PNG and let the multimodal model read it
      directly (handled in llm/extract.py). This sends the scan image to the cloud, the same
-     confidentiality boundary F1 already crosses by sending offer text to the cloud LLM.
+     confidentiality boundary cost-estimation already crosses by sending offer text to the cloud LLM.
 
 The cross-sum check remains the guardrail for offers; for statements the consultant's review
 is, as always, the backstop.

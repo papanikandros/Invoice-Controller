@@ -1,6 +1,6 @@
-"""Vendor resolution: which F1 block does an invoice belong to?
+"""Vendor resolution: which cost-estimation block does an invoice belong to?
 
-Per-vendor, not per-position (the confirmed F2 model). Matching is name-based
+Per-vendor, not per-position (the confirmed vne-generation model). Matching is name-based
 with legal-form stripping and token overlap — invoice letterheads and offer
 headers name the same company differently ("L&R Kältetechnik GmbH & Co.KG" vs
 "L&R"). An invoice from the consultant's own company is the Einsparkonzept fee
@@ -102,7 +102,7 @@ def _overlap_score(inv_tokens: set[str], block_tokens: set[str]) -> float:
 
 
 def match_vendor(invoice_vendor: str, ratios: list[VendorRatio]) -> VendorRatio | None:
-    """Best-overlap match between the invoice's vendor name and the F1 blocks.
+    """Best-overlap match between the invoice's vendor name and the cost-estimation blocks.
     Requires shared distinctive tokens (exact, near-miss, or compact-containment) —
     a zero-overlap 'best guess' would silently misroute an invoice, so None means
     none."""

@@ -1,4 +1,4 @@
-"""F2 unit suite — every deterministic layer of the VNE pipeline, no API calls.
+"""vne-generation unit suite — every deterministic layer of the VNE pipeline, no API calls.
 
 The LLM extraction itself is exercised by the live corpus tests; here we pin the
 config loader, the document classifier, vendor matching, ratio derivation
@@ -69,7 +69,7 @@ def test_projekt_yaml_roundtrip(tmp_path: Path) -> None:
         ("EK4_129- VNE-Tabelle EEW-7156180- Zepa.pdf", DocClass.OTHER),
         ("Leasingsvetrag akf leasing.pdf", DocClass.OTHER),
         # Since 2026-08-28 payment proofs are their own class (BEG needs them);
-        # F2 still ignores them — anything non-invoice/-offer lands in `ignored`.
+        # vne-generation still ignores them — anything non-invoice/-offer lands in `ignored`.
         ("akf Zahlungsnachweis Auslösung.pdf", DocClass.ZAHLUNGSNACHWEIS),
         ("Erklärung Meyring zur Vorkasse.pdf", DocClass.OTHER),
         ("Fragenkatalog Modul 4.pdf", DocClass.OTHER),
@@ -120,9 +120,9 @@ def test_own_company_detection() -> None:
     assert not is_own_company("Eggersmann GmbH")
 
 
-# --- ratios from the F1 .ods (uses the F1 writer as fixture source) ---------------------
+# --- ratios from the cost-estimation .ods (uses the cost-estimation writer as fixture source) ---------------------
 
-def test_ratios_from_f1_ods_with_nachlass_renormalize(tmp_path: Path) -> None:
+def test_ratios_from_kostenaufstellung_ods_with_nachlass_renormalize(tmp_path: Path) -> None:
     from invoice_controller.extract.cross_sum import check_offer
     from invoice_controller.models import OfferDocument, OfferHeader, OfferTotals, Position
     from invoice_controller.template.ods import write_kostenaufstellung

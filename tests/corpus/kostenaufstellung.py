@@ -1,11 +1,11 @@
-"""Parse an F1-format ``Kostenaufstellung`` PDF back into structured ground truth.
+"""Parse an cost-estimation-format ``Kostenaufstellung`` PDF back into structured ground truth.
 
 The consultant's hand-built Kostenaufstellung is shipped in the example corpus
-only as a PDF (no source ``.ods``). This reader recovers the numbers the F1
+only as a PDF (no source ``.ods``). This reader recovers the numbers the cost-estimation
 pipeline is expected to reproduce: per-vendor SOLL blocks, each with its Σ
 totals row (Gesamt / Investitionskosten / Nebenkosten / Nachlass) and the
 percentage split row. Positions are captured best-effort; the totals and the
-IK/NK percentage split are the load-bearing assertions (the split feeds F2).
+IK/NK percentage split are the load-bearing assertions (the split feeds vne-generation).
 """
 
 from __future__ import annotations
@@ -75,7 +75,7 @@ class SollBlock:
     def ik_ratio(self) -> Decimal | None:
         """IK share as a fraction. From the % row when present, else IK/Gesamt.
 
-        This is the split F2 applies to each of the vendor's invoices.
+        This is the split vne-generation applies to each of the vendor's invoices.
         """
         if self.ik_pct is not None:
             return self.ik_pct / Decimal(100)
@@ -94,7 +94,7 @@ class Kostenaufstellung:
     blocks: list[SollBlock] = field(default_factory=list)
 
     @property
-    def is_f1_format(self) -> bool:
+    def is_kostenaufstellung_format(self) -> bool:
         return bool(self.blocks)
 
 
@@ -165,11 +165,11 @@ def parse_kostenaufstellung(path: str | Path) -> Kostenaufstellung:
     return result
 
 
-def find_f1_pdf(project_dir: str | Path) -> Path | None:
-    """Return the canonical F1-format Kostenaufstellung PDF for a project.
+def find_kostenaufstellung_pdf(project_dir: str | Path) -> Path | None:
+    """Return the canonical cost-estimation-format Kostenaufstellung PDF for a project.
 
-    Several projects ship both the F1 output ("Kostenaufstellung, <Client>.pdf")
-    and raw vendor offers with "Kostenaufstellung" in the name. The F1 output is
+    Several projects ship both the cost-estimation output ("Kostenaufstellung, <Client>.pdf")
+    and raw vendor offers with "Kostenaufstellung" in the name. The cost-estimation output is
     the one whose text carries the "Gesamtpreis Pos." Σ rows.
     """
     project_dir = Path(project_dir)
@@ -177,7 +177,7 @@ def find_f1_pdf(project_dir: str | Path) -> Path | None:
         p for p in project_dir.glob("*.pdf")
         if "kostenaufstellung" in p.name.lower()
     )
-    # The F1 signature is the IK/NK percentage split row; raw vendor offers lack it.
+    # The cost-estimation signature is the IK/NK percentage split row; raw vendor offers lack it.
     scored = []
     for p in candidates:
         ka = parse_kostenaufstellung(p)
