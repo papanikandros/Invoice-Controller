@@ -308,6 +308,10 @@ def location_description(
 
 def beg_vne_generation(
     project_dir: Path = typer.Argument(..., help="BEG project folder (invoices, EKK documents, Zahlungsnachweise)"),
+    output: Path | None = typer.Option(
+        None, "--output", "-o",
+        help="Output .xlsx (default: Kostenzusammenstellung_<folder>.xlsx in the project folder)",
+    ),
 ) -> None:
     """BEG vne-generation — classify the project and extract the funding parameters.
 
@@ -365,10 +369,59 @@ def beg_vne_generation(
     if missing:
         console.print("[bold red]⚠ fehlende Programmdaten:[/bold red] " + ", ".join(missing))
 
-    console.print(
-        "\n[yellow]ⓘ Kostenzusammenstellung-Writer folgt (Build-Stufe B5)[/yellow] — "
-        "aktuell werden Klassifikation und Programmdaten geprüft."
+    # B5: full pipeline — invoices, payments, Gewerke, EH/EM writer. Classification
+    # and FundingMeta are handed in so their LLM work is not repeated.
+    from invoice_controller.beg.payments import PaymentStatus
+    from invoice_controller.extract.beg import build_kostenzusammenstellung
+
+    console.print("\n[cyan]→ Rechnungen, Zahlungsnachweise und Gewerke verarbeiten[/cyan]")
+    result = build_kostenzusammenstellung(
+        project_dir,
+        output_path=output,
+        classified=classified,
+        meta=meta,
+        on_progress=lambda msg: console.print(f"  · {msg}", style="dim"),
     )
+
+    row_tbl = RichTable(
+        title=f"Kostenzusammenstellung — {len(result.table.rows)} Zeile(n)", title_style="bold"
+    )
+    for col in ("Gewerk", "Firma", "Re-Nr.", "Re-Betrag", "bezahlt", "Hinweise"):
+        row_tbl.add_column(col)
+    for row in result.table.rows:
+        hints = "; ".join(row.flags) if row.flags else row.anmerkung_text
+        row_tbl.add_row(
+            row.gewerk,
+            row.firma,
+            row.re_nr,
+            format_de_decimal(row.re_betrag) if row.re_betrag is not None else "[red]—[/red]",
+            format_de_decimal(row.bezahlt) if row.bezahlt is not None else "[red]—[/red]",
+            f"[red]⚠ {hints}[/red]" if row.flags else hints,
+        )
+    console.print(row_tbl)
+
+    no_proof = sum(
+        1 for r in result.reconciliations if r.status is PaymentStatus.NO_PROOF
+    )
+    if no_proof:
+        console.print(f"[bold red]⚠ {no_proof} Rechnung(en) ohne Zahlungsnachweis[/bold red]")
+    if result.duplicates:
+        console.print(
+            "[yellow]ⓘ Duplikate übersprungen:[/yellow] "
+            + ", ".join(d.source_path.name for d in result.duplicates)
+        )
+    if result.unreadable:
+        console.print("[bold red]⚠ nicht verarbeitbar:[/bold red]")
+        for path, reason in result.unreadable:
+            console.print(f"  ✗ {path.name}: {reason}")
+    if result.ignored:
+        console.print(
+            f"[dim]ignoriert ({len(result.ignored)}): "
+            + ", ".join(c.path.name for c in result.ignored[:10])
+            + ("…" if len(result.ignored) > 10 else "")
+            + "[/dim]"
+        )
+    console.print(f"\n[bold green]✓ geschrieben:[/bold green] {result.output_path}")
 
 
 # --- command registration: program sub-apps + hidden deprecated aliases -----------------

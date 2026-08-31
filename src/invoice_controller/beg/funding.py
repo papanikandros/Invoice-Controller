@@ -85,6 +85,12 @@ class FundingMeta(BaseModel):
     baubegleitung_kosten_cap: Decimal | None = Field(
         default=None, description="Höchstgrenze Baubegleitung, üblich 5000 (EFH)"
     )
+    eh_standard: str | None = Field(
+        default=None, description="Effizienzhaus-Standard laut BzA, z.B. 'EH-55-WPB', 'EH 40 EE' (EH projects only)"
+    )
+    wohneinheiten: int | None = Field(
+        default=None, description="Anzahl Wohneinheiten laut Antrag/BzA"
+    )
 
     def missing_fields(self) -> list[str]:
         out = []
@@ -111,7 +117,7 @@ RULES:
 
 (P2) IDENTIFIERS AND DATES: vorgangsnummer is the Vorgangsnummer, BzA-ID, or KfW-Zuschussnummer exactly as printed (keep dashes). antrag_date = date of application/BzA creation; bescheid_date = date of the Zuwendungsbescheid/Zusage. ISO format YYYY-MM-DD.
 
-(P3) FIGURES: geplante_kosten_massnahmen = the geplante förderfähige Kosten of the technical measures per the application; geplante_kosten_baubegleitung = the same for Baubegleitung/Fachplanung when stated separately. foerdersatz_pct = the funding rate in percent (e.g. 55, 70, 20, 15); foerderfaehige_kosten_cap = the maximum eligible cost the rate applies to (e.g. 30000 for Heizung, 60000 for an EM Gebäudehülle measure, 120000 WEG). baubegleitung_foerdersatz_pct / baubegleitung_kosten_cap analogously (typically 50 % up to 5000). German numbers: "30.000,00" = 30000.00; return decimal strings with dot separator.
+(P3) FIGURES: geplante_kosten_massnahmen = the geplante förderfähige Kosten of the technical measures per the application; geplante_kosten_baubegleitung = the same for Baubegleitung/Fachplanung when stated separately. foerdersatz_pct = the funding rate in percent (e.g. 55, 70, 20, 15); foerderfaehige_kosten_cap = the maximum eligible cost the rate applies to (e.g. 30000 for Heizung, 60000 for an EM Gebäudehülle measure, 120000 WEG). baubegleitung_foerdersatz_pct / baubegleitung_kosten_cap analogously (typically 50 % up to 5000). German numbers: "30.000,00" = 30000.00; return decimal strings with dot separator. For Effizienzhaus projects also record eh_standard (the EH standard incl. suffixes, e.g. 'EH-55-WPB') and wohneinheiten (number of dwelling units) when stated.
 
 (P4) CLIENT BASIS: antragsteller_name = the applicant exactly as printed. client_basis = "unternehmen" when the Antragsteller is a business (legal form GmbH, AG, GmbH & Co. KG, e.K., OHG, UG, or the documents state Vorsteuerabzug) — eligible costs then count netto; "privat" when the Antragsteller is a natural person / private household — costs count brutto; "unclear" otherwise. Give the deciding signal in client_basis_reason.
 
