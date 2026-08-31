@@ -82,7 +82,7 @@ CRITICAL RULES, in order of importance:
 
 (I9) SKONTO: record offered early-payment terms ("2 % Skonto bei Zahlung bis …") in `skonto_pct`/`skonto_deadline`. "14 Tage netto ohne Abzug" means no Skonto → both null. Never compute a discounted amount yourself.
 
-(I10) When a field is genuinely absent, OMIT it (null). Do not fabricate invoice numbers, dates, or amounts. If the document turns out not to be an invoice at all (e.g. a contract or payment advice), still fill what exists and set `subject` to a short description of what the document actually is.
+(I10) When a field is genuinely absent, return it EXPLICITLY as null — output every schema key, never leave one out, never fabricate invoice numbers, dates, or amounts. (Models measurably invent values for absent fields when allowed to skip keys; an explicit null is the honest answer.) If the document turns out not to be an invoice at all (e.g. a contract or payment advice), still fill what exists and set `subject` to a short description of what the document actually is.
 
 (I11) POSITIONS — extract EVERY billed line item into `positions`: pos (the printed position number, "" when unnumbered), description (short name, not the full scope prose), qty, unit, unit_price_net, line_total_net (the line's NET total; NEGATIVE for discount/Nachlass/credit lines). Sub-items without their own price, group subtotals (Zwischensumme, Titelsumme, Übertrag), the Nettosumme/MwSt/Brutto rows, and payment terms are NOT positions. A document-level discount printed as its own line (Rabatt/Nachlass) IS a position with a negative line_total_net.
 
@@ -105,6 +105,7 @@ def extract_invoice_llm(
     pages: list[str],
     source_path: Path,
     agent: Agent[None, ExtractedInvoice] | None = None,
+    model_settings: dict | None = None,
 ) -> ExtractedInvoice:
     paginated = "\n".join(f"<<PAGE {i}>>\n{p}" for i, p in enumerate(pages, start=1))
     user = (
@@ -113,13 +114,14 @@ def extract_invoice_llm(
         f"{paginated}"
     )
     runner = agent or get_invoice_agent()
-    return _run_with_http_retry(runner, user)
+    return _run_with_http_retry(runner, user, model_settings=model_settings)
 
 
 def extract_invoice_llm_vision(
     page_pngs: list[bytes],
     source_path: Path,
     agent: Agent[None, ExtractedInvoice] | None = None,
+    model_settings: dict | None = None,
 ) -> ExtractedInvoice:
     message: list[Any] = [
         "The following page image(s) are one German invoice PDF that has NO text layer — "
@@ -129,4 +131,4 @@ def extract_invoice_llm_vision(
     for png in page_pngs:
         message.append(BinaryContent(data=png, media_type="image/png"))
     runner = agent or get_invoice_agent()
-    return _run_with_http_retry(runner, message)
+    return _run_with_http_retry(runner, message, model_settings=model_settings)

@@ -8,7 +8,9 @@ from pathlib import Path
 from pydantic_ai import Agent
 
 from invoice_controller.extract.cross_sum import check_offer, check_statement
+from invoice_controller.extract.grounding import check_amounts_grounded
 from invoice_controller.llm.extract import (
+    RETRY_SETTINGS,
     ExtractedOffer,
     extract_offer_llm,
     extract_offer_llm_vision,
@@ -103,11 +105,38 @@ def drop_duplicate_discount_positions(
     return kept
 
 
+def _resolve_offer(path: Path, positions: list[Position], totals: OfferTotals, doc_type):
+    """Shared post-LLM pipeline: kind resolution, deterministic pinning, cross-sum."""
+    kind = kind_from_filename(path) or doc_type
+    positions = unflag_inklusive_positions(positions)
+    if kind is DocumentKind.STATEMENT:
+        cross_sum = check_statement(positions)
+    else:
+        positions = drop_duplicate_discount_positions(positions, totals)
+        cross_sum = check_offer(positions, totals)
+    return kind, positions, cross_sum
+
+
+def _grounding_amounts(positions: list[Position], totals: OfferTotals) -> dict:
+    """The STATED fields the R2 guard checks — never derived values."""
+    amounts = {
+        "Nettosumme": totals.nettosumme,
+        "MwSt": totals.mwst_amount,
+        "Endbetrag": totals.endbetrag,
+        "Sonderpreis": totals.sonderpreis,
+        "Preisnachlass": totals.preisnachlass,
+    }
+    for i, pos in enumerate(positions, start=1):
+        amounts[f"Pos. {pos.pos or i}"] = pos.line_total_net
+    return amounts
+
+
 def extract_offer(
     path: Path,
     agent: Agent[None, ExtractedOffer] | None = None,
     *,
     with_narrative: bool = True,
+    with_retry: bool = True,
     summarize_agent: Agent[None, CostNarrative] | None = None,
 ) -> OfferDocument:
     pages = [normalize_text(p) for p in extract_pages(path)]
@@ -136,16 +165,35 @@ def extract_offer(
         )
 
     # Filename is the primary signal; the LLM's classification is the fallback when the
-    # filename is uninformative.
-    kind = kind_from_filename(path) or doc_type
+    # filename is uninformative (inside _resolve_offer).
+    kind, positions, cross_sum = _resolve_offer(path, positions, totals, doc_type)
 
-    positions = unflag_inklusive_positions(positions)
+    # R5 (2026-08-31): ONE bounded resample when the deterministic run fails its
+    # cross-sum. Adopted ONLY if the retry reconciles; recorded via "+retry".
+    # Statements have no cross-sum (not_applicable), so nothing to retry there.
+    if with_retry and not cross_sum.passed and not cross_sum.not_applicable:
+        if use_vision:
+            r_header, r_positions, r_totals, r_doc_type = extract_offer_llm_vision(
+                images, source_path=path, agent=agent, model_settings=RETRY_SETTINGS
+            )
+        else:
+            r_header, r_positions, r_totals, r_doc_type = extract_offer_llm(
+                pages, source_path=path, agent=agent, model_settings=RETRY_SETTINGS
+            )
+        r_kind, r_positions, r_cross = _resolve_offer(path, r_positions, r_totals, r_doc_type)
+        if r_cross.passed:
+            header, positions, totals, kind, cross_sum = (
+                r_header, r_positions, r_totals, r_kind, r_cross,
+            )
+            method += "+retry"
 
-    if kind is DocumentKind.STATEMENT:
-        cross_sum = check_statement(positions)
-    else:
-        positions = drop_duplicate_discount_positions(positions, totals)
-        cross_sum = check_offer(positions, totals)
+    # R2: stated amounts must appear verbatim in the text the LLM read; the vision
+    # path has no local text to ground against, so the guard is skipped there.
+    grounding_check = None
+    if not use_vision:
+        grounding_check = check_amounts_grounded(
+            _grounding_amounts(positions, totals), "\n".join(pages)
+        )
 
     narrative: CostNarrative | None = None
     # The narrative reads the page text; the vision path has none, so skip it there.
@@ -166,5 +214,6 @@ def extract_offer(
         kind=kind,
         vat_basis_unstated=(kind is DocumentKind.STATEMENT),
         narrative=narrative,
+        grounding_check=grounding_check,
         extraction_method=method,
     )

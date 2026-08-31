@@ -63,7 +63,7 @@ CRITICAL RULES, in order of importance:
    For mixed positions (capital goods + service combined into one line), choose by majority intent — favour nebenkosten only when the line is primarily a service deliverable; pure goods purchases are investitionskosten even if a small Lohnanteil is bundled in.
    Include a brief German rationale in kategorie_reason.
 
-(R9) When a field is genuinely absent from the document, OMIT it. Do not fabricate numbers, do not guess. Customer_address, mwst_pct, sonderpreis, artikelnummer, etc. are all optional and should be null when missing.
+(R9) When a field is genuinely absent from the document, return it EXPLICITLY as null — output every schema key, never leave one out. Do not fabricate numbers, do not guess. Customer_address, mwst_pct, sonderpreis, artikelnummer, etc. are all optional: null when missing, never omitted, never invented.
 
 (R10) OPTIONAL POSITIONS. Capture EVERY priced cost line, including ones the customer can choose to leave out — never silently drop them. A position is OPTIONAL (set optional=true and optional_reason to the German marker) when the document marks it as not part of the binding base scope, by ANY of these signals:
    - an explicit label: "Optionalposition", "optionale Position", "Option", "Eventualposition", "Bedarfsposition", "Alternativposition", "Wahlposition";
@@ -88,6 +88,11 @@ CRITICAL RULES, in order of importance:
 # Kostenkategorie, description wording). The deterministic guards (cross-sum, discount
 # normalization) and the consultant's review remain the correctness backstop.
 DETERMINISTIC_SETTINGS: dict = {"temperature": 0.0}
+
+# R5 (decided 2026-08-31): ONE bounded resample after a failed cross-sum. The
+# deterministic run stays canonical; a retry result is adopted only if IT
+# reconciles, and the adoption is recorded in extraction_method ("+retry").
+RETRY_SETTINGS: dict = {"temperature": 0.7}
 
 
 @lru_cache(maxsize=1)
@@ -133,7 +138,11 @@ def _resolve_model() -> str | Model:
     )
 
 
-def _run_with_http_retry(agent: Agent[None, _OutT], user: str | list[Any]) -> _OutT:
+def _run_with_http_retry(
+    agent: Agent[None, _OutT],
+    user: str | list[Any],
+    model_settings: dict | None = None,
+) -> _OutT:
     """Retry transient API errors with backoff. Covers upstream HTTP errors (503 capacity,
     429 rate-limit, 5xx) and malformed responses (`UnexpectedModelBehavior`) — the latter is
     common with free OpenRouter models that intermittently return an error envelope instead of
@@ -143,7 +152,7 @@ def _run_with_http_retry(agent: Agent[None, _OutT], user: str | list[Any]) -> _O
     last_exc: BaseException | None = None
     for attempt in range(len(backoffs) + 1):
         try:
-            return agent.run_sync(user).output
+            return agent.run_sync(user, model_settings=model_settings).output
         except ModelHTTPError as exc:
             transient = exc.status_code in (429, 503) or 500 <= exc.status_code < 600
             if not transient or attempt == len(backoffs):
@@ -165,6 +174,7 @@ def extract_offer_llm(
     pages: list[str],
     source_path: Path,
     agent: Agent[None, ExtractedOffer] | None = None,
+    model_settings: dict | None = None,
 ) -> tuple[OfferHeader, list[Position], OfferTotals, DocumentKind]:
     paginated = "\n".join(f"<<PAGE {i}>>\n{p}" for i, p in enumerate(pages, start=1))
     user = (
@@ -173,7 +183,7 @@ def extract_offer_llm(
         f"{paginated}"
     )
     runner = agent or get_agent()
-    extracted = _run_with_http_retry(runner, user)
+    extracted = _run_with_http_retry(runner, user, model_settings=model_settings)
     return extracted.header, extracted.positions, extracted.totals, extracted.doc_type
 
 
@@ -181,6 +191,7 @@ def extract_offer_llm_vision(
     page_pngs: list[bytes],
     source_path: Path,
     agent: Agent[None, ExtractedOffer] | None = None,
+    model_settings: dict | None = None,
 ) -> tuple[OfferHeader, list[Position], OfferTotals, DocumentKind]:
     """Vision fallback for scanned PDFs with no text layer: send the rendered page images to
     the (multimodal) extraction agent under the same SYSTEM_PROMPT. The model reads the scan
@@ -193,5 +204,5 @@ def extract_offer_llm_vision(
     for png in page_pngs:
         message.append(BinaryContent(data=png, media_type="image/png"))
     runner = agent or get_agent()
-    extracted = _run_with_http_retry(runner, message)
+    extracted = _run_with_http_retry(runner, message, model_settings=model_settings)
     return extracted.header, extracted.positions, extracted.totals, extracted.doc_type

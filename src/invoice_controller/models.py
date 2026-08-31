@@ -258,6 +258,9 @@ class InvoiceDocument(BaseModel):
     # for BEG per-position eligibility).
     positions: list[InvoicePosition] = Field(default_factory=list)
     position_check: CrossSumCheck | None = None
+    # R2 (2026-08-31): verbatim-amount grounding — stated amounts the LLM returned that
+    # are NOT findable in the source text (text/Tesseract paths only). Flag, never block.
+    grounding_check: AmountCheck | None = None
     amount_check: AmountCheck
     extraction_method: str = "pdfplumber+llm"
 
@@ -276,6 +279,8 @@ class OfferDocument(BaseModel):
     # so it surfaces in the consultant's review rather than being silently assumed.
     vat_basis_unstated: bool = False
     narrative: CostNarrative | None = None
+    # R2 (2026-08-31): verbatim-amount grounding, see InvoiceDocument.grounding_check.
+    grounding_check: AmountCheck | None = None
     extraction_method: str = "pdfplumber+llm"
 
     @property
