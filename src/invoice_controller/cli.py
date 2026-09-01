@@ -432,12 +432,29 @@ def beg_vne_generation(
     console.print(f"\n[bold green]✓ geschrieben:[/bold green] {result.output_path}")
 
 
+def serve(
+    host: str = typer.Option("127.0.0.1", "--host", help="Bind address (0.0.0.0 for LAN)"),
+    port: int = typer.Option(8080, "--port", help="Port"),
+) -> None:
+    """Web UI — select procedure, upload documents, run, download results.
+
+    Optional password gate via IC_WEB_PASSWORD in .env (recommended before exposing
+    the port through ngrok; additionally use `ngrok http --basic-auth "user:pw" <port>`)."""
+    from invoice_controller.web.app import run_server
+
+    console.print(f"[bold]Invoice-Controller Web-UI[/bold] → http://{host}:{port}")
+    if not (host.startswith("127.") or host == "localhost") and not __import__("os").environ.get("IC_WEB_PASSWORD"):
+        console.print("[yellow]⚠ Nicht-lokale Bindung ohne IC_WEB_PASSWORD — Zugang ist ungeschützt.[/yellow]")
+    run_server(host=host, port=port)
+
+
 # --- command registration: program sub-apps + hidden deprecated aliases -----------------
 
 eew_app.command("cost-estimation")(cost_estimation)
 eew_app.command("vne-generation")(vne_generation)
 eew_app.command("location-description")(location_description)
 beg_app.command("vne-generation")(beg_vne_generation)
+app.command("serve")(serve)
 
 
 if __name__ == "__main__":

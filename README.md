@@ -41,6 +41,14 @@ cp .env.example .env
 
 The provider preference order is **OpenRouter → OpenAI → Gemini → Anthropic**; the first key present wins. The recommended default is OpenRouter with `OPENROUTER_MODEL=google/gemini-2.5-flash` — one key reaches a reliable multimodal model (needed for the scanned-PDF vision path) at cents per project. Avoid `:free` models for cost-estimation/vne-generation: they return unreliable structured output. See [`.env.example`](.env.example) for every supported variable. `.env` is gitignored; `.env.example` is committed.
 
+## Web UI (`serve`)
+
+`invoice-controller serve [--host 0.0.0.0] [--port 8080]` starts the browser UI (German): select a
+procedure, upload the documents, press start, download the result. Runs execute in the background
+with live per-file status; review flags and errors are shown loudly and logged to a per-run
+`audit.jsonl` (`tmp/webruns/`, last 20 runs kept). Set `IC_WEB_PASSWORD` in `.env` to enable the
+password gate — strongly recommended before exposing the port (e.g. `ngrok http --basic-auth "user:pw" 8080`).
+
 ## Run cost-estimation
 
 `invoice-controller eew cost-estimation <path>` accepts **either a single offer PDF or a directory** of PDFs. A directory is classified and only offer-classified PDFs are processed (skips Fragenkatalog, tool outputs, invoices, …).

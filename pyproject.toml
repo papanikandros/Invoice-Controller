@@ -8,6 +8,7 @@ dependencies = [
     "anthropic>=0.106.0",
     "babel>=2.18.0",
     "google-genai>=2.8.0",
+    "nicegui>=3.16.0",
     "odfdo>=3.22.8",
     "openai>=2.41.0",
     "openpyxl>=3.1.5",
