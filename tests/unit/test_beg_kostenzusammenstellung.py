@@ -102,14 +102,18 @@ class TestBuildTable:
         assert any("abgeleitet" in n for n in row.anmerkung)
         assert any("inkl. 2 Abschlags" in n for n in row.anmerkung)
 
-    def test_netto_basis_for_business_client(self) -> None:
+    def test_business_client_re_betrag_stays_brutto_with_netto_note(self) -> None:
+        """Buttergasse ground truth (2026-08-31): Re-Betrag is brutto even on the
+        netto basis — the basis applies to förderfähig, noted on the row."""
         inv = _invoice("Brasseler", "B-1", "63452.80", brutto="75508.83")
         table = build_table(
             _meta(client_basis=ClientBasis.UNTERNEHMEN),
             [_paid(inv)],
             {id(inv): _label("WDVS")},
         )
-        assert table.massnahmen[0].re_betrag == Decimal("63452.80")
+        row = table.massnahmen[0]
+        assert row.re_betrag == Decimal("75508.83")
+        assert any("Netto-Basis" in n for n in row.anmerkung)
 
     def test_no_proof_defaults_bezahlt_to_re_betrag_with_flag(self) -> None:
         inv = _invoice("Maler GmbH", "M-1", "1000.00", brutto="1190.00")

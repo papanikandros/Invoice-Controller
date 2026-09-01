@@ -8,10 +8,12 @@ Baubegleitung & Fachplanung), mirroring the consultant's ground-truth sheets
   Schlussrechnung states the cumulative project total, its Anzahlungs-/
   Abschlagsrechnungen do NOT get own rows — the Schlussrechnung row carries the
   cumulative Re-Betrag and notes how many advances it folds.
-- **Re-Betrag basis**: brutto for private clients, netto for businesses
-  (FundingMeta.client_basis; UNCLEAR → brutto + red flag). A cumulative brutto the
-  document does not state literally is derived netto × (1 + MwSt-Satz) and SAID SO
-  in the Anmerkung — never silently.
+- **Re-Betrag is ALWAYS brutto** (corrected 2026-08-31 against the Buttergasse
+  ground truth: the consultant's Re-Betrag column shows brutto even for business
+  clients — the netto basis applies to the FÖRDERFÄHIG column, which B3/the
+  consultant fills; Unternehmen rows carry a "förderfähig auf Netto-Basis" note).
+  A cumulative brutto the document does not state literally is derived
+  netto × (1 + MwSt-Satz) and SAID SO in the Anmerkung — never silently.
 - **förderfähig stays EMPTY** until the eligibility layer (B3, blocked on the
   consultant's fundability-rules document) or the consultant fills it — the
   Förderung formulas reference the cells live, so the sheet computes as soon as the
@@ -95,16 +97,15 @@ def _fold_advances(invoices: list[InvoiceDocument]) -> tuple[list[InvoiceDocumen
 def _re_betrag(
     inv: InvoiceDocument, basis: ClientBasis, cumulative: bool
 ) -> tuple[Decimal | None, list[str], list[str]]:
-    """The row's amount on the project basis. Returns (amount, anmerkungen, flags)."""
+    """The row's Re-Betrag — always brutto (see module docstring). Returns
+    (amount, anmerkungen, flags)."""
     notes: list[str] = []
     flags: list[str] = []
 
     if basis is ClientBasis.UNTERNEHMEN:
-        amount = inv.cumulative_netto if cumulative else inv.netto
-        return amount, notes, flags
-
-    if basis is ClientBasis.UNCLEAR:
-        flags.append("Kundenbasis (privat/Unternehmen) unklar — Brutto angenommen, prüfen")
+        notes.append("förderfähig auf Netto-Basis (Unternehmen)")
+    elif basis is ClientBasis.UNCLEAR:
+        flags.append("Kundenbasis (privat/Unternehmen) unklar — prüfen")
 
     if not cumulative:
         if inv.brutto is not None:

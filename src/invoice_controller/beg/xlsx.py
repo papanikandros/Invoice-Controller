@@ -171,7 +171,10 @@ def write_kostenzusammenstellung(table: BegTable, output_path: Path) -> None:
             f = _sum_formula(col_letter, mass_rows)
             if f:
                 ws.cell(sum_r, col, f).number_format = _EUR
-        ws.cell(sum_r, 9, _foerderung_text(meta.foerdersatz_pct, meta.foerderfaehige_kosten_cap, bis=False))
+        foerderung_label = _foerderung_text(meta.foerdersatz_pct, meta.foerderfaehige_kosten_cap, bis=False)
+        if foerderung_label and meta.foerdersatz_zusammensetzung:
+            foerderung_label += f" ({meta.foerdersatz_zusammensetzung})"
+        ws.cell(sum_r, 9, foerderung_label)
         if meta.foerdersatz_pct is not None and mass_rows:
             cap = meta.foerderfaehige_kosten_cap
             h_ref = f"H{sum_r}"

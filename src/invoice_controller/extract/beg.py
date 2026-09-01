@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Callable
 
 from invoice_controller.beg.compute import BegTable, build_table
-from invoice_controller.beg.funding import FundingMeta, extract_funding_meta
+from invoice_controller.beg.funding import BegProgramType, FundingMeta, extract_funding_meta
 from invoice_controller.beg.gewerk import GewerkLabel, label_invoice
 from invoice_controller.beg.payments import (
     ProofRecord,
@@ -105,6 +105,7 @@ def build_kostenzusammenstellung(
     output_path: Path | None = None,
     classified: list[Classified] | None = None,
     meta: FundingMeta | None = None,
+    program_hint: BegProgramType | None = None,
     on_progress: ProgressFn = lambda _msg: None,
 ) -> BegResult:
     # `classified`/`meta` can be handed in by a caller that already ran them (the CLI
@@ -119,12 +120,20 @@ def build_kostenzusammenstellung(
             if c.doc_class in (DocClass.ANTRAGSBESTAETIGUNG, DocClass.ZUWENDUNGSBESCHEID)
         ]
         if not funding_docs:
-            raise BegProjectError(
-                "Keine Antragsbestätigung / kein Zuwendungsbescheid gefunden — "
-                "Programmdaten können nicht bestimmt werden."
-            )
-        on_progress(f"Programmdaten aus {len(funding_docs)} Förderdokument(en)")
-        meta = extract_funding_meta(funding_docs)
+            # Loud, not blocking (decided 2026-08-31, EH corpus projects ship no EKK
+            # docs): the table is still worth producing — every program field renders
+            # red "fehlt" and the consultant supplies the Bescheid data by hand.
+            on_progress("KEINE Förderdokumente — Programmdaten bleiben leer (rot)")
+            meta = FundingMeta()
+        else:
+            on_progress(f"Programmdaten aus {len(funding_docs)} Förderdokument(en)")
+            meta = extract_funding_meta(funding_docs)
+
+    # The EH-vs-EM template choice normally follows the extracted program type; when
+    # the documents are missing/unclear the caller may assert it (the program family
+    # is user input by CLI design — never the figures).
+    if program_hint is not None and meta.program_type is BegProgramType.UNCLEAR:
+        meta = meta.model_copy(update={"program_type": program_hint})
 
     invoices: list[InvoiceDocument] = []
     unreadable: list[tuple[Path, str]] = []

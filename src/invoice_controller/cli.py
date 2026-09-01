@@ -312,6 +312,10 @@ def beg_vne_generation(
         None, "--output", "-o",
         help="Output .xlsx (default: Kostenzusammenstellung_<folder>.xlsx in the project folder)",
     ),
+    template: str | None = typer.Option(
+        None, "--template",
+        help="EH/EM template override when the project ships no Antragsbestätigung/Bescheid (eh|em)",
+    ),
 ) -> None:
     """BEG vne-generation — classify the project and extract the funding parameters.
 
@@ -332,6 +336,9 @@ def beg_vne_generation(
         tbl.add_row(c.doc_class.value, str(c.path.relative_to(project_dir)), c.reason)
     console.print(tbl)
 
+    from invoice_controller.beg.funding import BegProgramType, FundingMeta
+
+    program_hint = BegProgramType(template.lower()) if template else None
     funding_docs = [
         c.path for c in classified
         if c.doc_class in (DocClass.ANTRAGSBESTAETIGUNG, DocClass.ZUWENDUNGSBESCHEID)
@@ -339,12 +346,12 @@ def beg_vne_generation(
     if not funding_docs:
         console.print(
             "[bold red]⚠ Keine Antragsbestätigung / kein Zuwendungsbescheid gefunden[/bold red] — "
-            "Programmdaten (Fördersatz, Vorgangsnummer, Basis) können nicht bestimmt werden."
+            "Programmdaten (Fördersatz, Vorgangsnummer, Basis) bleiben leer und werden rot markiert."
         )
-        raise typer.Exit(1)
-
-    console.print(f"\n[cyan]→ Programmdaten aus {len(funding_docs)} Förderdokument(en) extrahieren[/cyan]")
-    meta = extract_funding_meta(funding_docs)
+        meta = FundingMeta()
+    else:
+        console.print(f"\n[cyan]→ Programmdaten aus {len(funding_docs)} Förderdokument(en) extrahieren[/cyan]")
+        meta = extract_funding_meta(funding_docs)
 
     rows = [
         ("Programm", f"{meta.program_type.value}" + (f" — {meta.program_label}" if meta.program_label else "")),
@@ -355,7 +362,7 @@ def beg_vne_generation(
         ("Basis", f"{meta.client_basis.value}" + (f" ({meta.client_basis_reason})" if meta.client_basis_reason else "")),
         ("Kosten Maßnahmen lt. Antrag", format_de_decimal(meta.geplante_kosten_massnahmen) + " €" if meta.geplante_kosten_massnahmen is not None else None),
         ("Kosten Baubegleitung lt. Antrag", format_de_decimal(meta.geplante_kosten_baubegleitung) + " €" if meta.geplante_kosten_baubegleitung is not None else None),
-        ("Fördersatz", f"{meta.foerdersatz_pct} % auf {format_de_decimal(meta.foerderfaehige_kosten_cap) + ' €' if meta.foerderfaehige_kosten_cap is not None else '?'}" if meta.foerdersatz_pct is not None else None),
+        ("Fördersatz", f"{meta.foerdersatz_pct} % auf {format_de_decimal(meta.foerderfaehige_kosten_cap) + ' €' if meta.foerderfaehige_kosten_cap is not None else '?'}" + (f" ({meta.foerdersatz_zusammensetzung})" if meta.foerdersatz_zusammensetzung else "") if meta.foerdersatz_pct is not None else None),
         ("Fördersatz Baubegleitung", f"{meta.baubegleitung_foerdersatz_pct} % bis {format_de_decimal(meta.baubegleitung_kosten_cap) + ' €' if meta.baubegleitung_kosten_cap is not None else '?'}" if meta.baubegleitung_foerdersatz_pct is not None else None),
     ]
     meta_tbl = RichTable(title="Programmdaten (FundingMeta)", title_style="bold")
@@ -380,6 +387,7 @@ def beg_vne_generation(
         output_path=output,
         classified=classified,
         meta=meta,
+        program_hint=program_hint,
         on_progress=lambda msg: console.print(f"  · {msg}", style="dim"),
     )
 
