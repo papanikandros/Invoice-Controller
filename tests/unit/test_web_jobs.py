@@ -83,6 +83,7 @@ class TestJobStore:
     def test_rehydration_after_restart(self, tmp_path: Path) -> None:
         store = JobStore(tmp_path)
         job = store.create("beg-vne-generation", "Projekt X")
+        job.log("Rechnung: a.pdf")
         job.file_status("a.pdf", "ok")
         job.add_flag("kein Zahlungsnachweis")
         out = job.run_dir / "Kostenzusammenstellung.xlsx"; out.write_bytes(b"x")
@@ -94,6 +95,8 @@ class TestJobStore:
         fresh.load_history()
         loaded = fresh.jobs[job.id]
         assert loaded.title == "Projekt X"
+        # Protokoll survives the restart (empty-Protokoll bug, 2026-09-03)
+        assert any("Rechnung: a.pdf" in line for line in loaded.progress)
         assert loaded.procedure == "beg-vne-generation"
         assert loaded.files["a.pdf"].status == "ok"
         assert loaded.flags == ["kein Zahlungsnachweis"]
@@ -107,3 +110,72 @@ class TestJobStore:
         loaded = fresh.jobs[job.id]
         assert loaded.status == "fehler"
         assert any(e.error_class == "server-restart" for e in loaded.errors)
+
+
+class TestVneConfigFromParams:
+    def test_full_params(self) -> None:
+        from decimal import Decimal
+
+        from invoice_controller.web.registry import vne_config_from_params
+
+        config, flags = vne_config_from_params({
+            "kunde_name": "ZePa GmbH", "kunde_adresse": "Weg 1, 12345 Ort",
+            "zeitraum_von": "01.01.2025", "zeitraum_bis": "31.12.2026",
+            "foerderbetrag": "45.000,00", "foerderanteil": "40", "agvo": "",
+        })
+        assert flags == []
+        assert config.client.name == "ZePa GmbH"
+        assert config.has_window and config.window_ok(__import__("datetime").date(2025, 6, 1))
+        assert config.bescheid.foerderbetrag == Decimal("45000.00")
+        assert config.bescheid.kostendeckel_foerderanteil == Decimal("0.4")
+
+    def test_empty_params_degrade_with_named_flags(self) -> None:
+        from invoice_controller.web.registry import vne_config_from_params
+
+        config, flags = vne_config_from_params({})
+        assert config.client is None and not config.has_window and config.bescheid is None
+        assert any("Adressprüfung" in f for f in flags)
+        assert any("Zeitraum" in f for f in flags)
+        assert any("Förderbetrag-Block" in f for f in flags)
+
+    def test_unparseable_date_names_the_field(self) -> None:
+        import pytest
+
+        from invoice_controller.web.registry import vne_config_from_params
+
+        with pytest.raises(ValueError, match="Bewilligungszeitraum von.*TT.MM.JJJJ"):
+            vne_config_from_params({"zeitraum_von": "nächstes Jahr"})
+
+
+class TestBescheidMerge:
+    def test_ui_fields_win_and_gaps_fill(self) -> None:
+        from datetime import date
+        from decimal import Decimal
+
+        from invoice_controller.extract.bescheid import EewBescheidMeta
+        from invoice_controller.web.registry import merge_bescheid_into_config, vne_config_from_params
+
+        config, _ = vne_config_from_params({"foerderbetrag": "50.000,00"})
+        meta = EewBescheidMeta(
+            empfaenger_name="Wirox GmbH",
+            bewilligungszeitraum_start=date(2025, 1, 1),
+            bewilligungszeitraum_end=date(2026, 12, 31),
+            foerderbetrag=Decimal("45000"),
+            foerderanteil_pct=Decimal("40"),
+        )
+        adopted = merge_bescheid_into_config(config, meta)
+        assert config.client.name == "Wirox GmbH"
+        assert config.has_window
+        # UI-typed Förderbetrag beats the extracted one:
+        assert config.bescheid.foerderbetrag == Decimal("50000.00")
+        assert config.bescheid.kostendeckel_foerderanteil == Decimal("0.4")
+        assert any("Kunde" in a for a in adopted)
+        assert not any("Förderbetrag " in a for a in adopted)
+
+    def test_empty_meta_adopts_nothing(self) -> None:
+        from invoice_controller.extract.bescheid import EewBescheidMeta
+        from invoice_controller.web.registry import merge_bescheid_into_config, vne_config_from_params
+
+        config, _ = vne_config_from_params({})
+        assert merge_bescheid_into_config(config, EewBescheidMeta()) == []
+        assert config.client is None and not config.has_window

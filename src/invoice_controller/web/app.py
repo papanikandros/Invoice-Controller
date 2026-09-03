@@ -58,9 +58,12 @@ def _procedure_panel(proc: Procedure) -> None:
     ui.label(proc.upload_hint).classes("text-sm text-gray-600")
 
     def stash(subfolder: str | None):
-        def handler(e) -> None:
-            pending.append((e.name, e.content.read(), subfolder))
-            ui.notify(f"{e.name} hochgeladen")
+        async def handler(e) -> None:
+            # NiceGUI 3.x: the event carries a FileUpload (`e.file`) with an ASYNC
+            # read — accessing e.name/e.content was the 3.16 upload bug (2026-09-03).
+            content = await e.file.read()
+            pending.append((e.file.name, content, subfolder))
+            ui.notify(f"{e.file.name} hochgeladen")
             counter.set_text(f"{len(pending)} Datei(en) bereit")
         return handler
 
@@ -72,11 +75,19 @@ def _procedure_panel(proc: Procedure) -> None:
         ui.upload(on_upload=stash(ZAHLUNGSNACHWEIS_SUBFOLDER), multiple=True, auto_upload=True) \
             .props('accept=".pdf,.png,.jpg,.jpeg" label="Zahlungsnachweise hier ablegen"').classes("w-full")
 
-    for spec in proc.fields:
-        if spec.options:
-            field_inputs[spec.key] = ui.select(list(spec.options), value=spec.options[0], label=spec.label)
-        else:
-            field_inputs[spec.key] = ui.input(spec.label, placeholder=spec.placeholder)
+    # Wide inputs: Quasar truncates long labels ("Kostendeckel-Förderanteil (%)")
+    # in narrow fields — each input fills its grid cell, two generous columns.
+    with ui.grid(columns=2).classes("gap-x-6 gap-y-2 mt-2 w-full max-w-5xl"):
+        for spec in proc.fields:
+            label = spec.label + (" *" if spec.required else "")
+            if spec.options:
+                field_inputs[spec.key] = ui.select(
+                    list(spec.options), value=spec.options[0], label=label
+                ).classes("w-full min-w-[22rem]")
+            else:
+                field_inputs[spec.key] = ui.input(label, placeholder=spec.placeholder).classes(
+                    "w-full min-w-[22rem]"
+                )
 
     counter = ui.label("0 Datei(en) bereit").classes("text-sm")
 
@@ -85,7 +96,13 @@ def _procedure_panel(proc: Procedure) -> None:
             ui.notify("Bitte zuerst Dokumente hochladen.", type="warning")
             return
         params = {key: (inp.value or "") for key, inp in field_inputs.items()}
-        job = STORE.create(proc.key, f"{proc.label} — {len(pending)} Datei(en)")
+        for spec in proc.fields:
+            if spec.required and not params.get(spec.key, "").strip():
+                ui.notify(f"Bitte '{spec.label}' ausfüllen.", type="warning")
+                return
+        projekt = params.get("projekt", "").strip()
+        title = f"{proc.label} — {projekt}" if projekt else f"{proc.label} — {len(pending)} Datei(en)"
+        job = STORE.create(proc.key, title)
         for name, content, subfolder in pending:
             STORE.save_upload(job, name, content, subfolder=subfolder)
         STORE.start(job, lambda j: proc.run(j, params))
@@ -155,11 +172,31 @@ def job_page(job_id: str) -> None:
                     ui.label(fs.name).classes("text-sm")
                     _badge(fs.status)
                     ui.label(fs.message).classes("text-sm text-gray-600")
-        with ui.expansion("Protokoll", icon="terminal").classes("w-full mt-2"):
-            ui.label("\n".join(job.progress[-60:]) or "—").classes("text-xs whitespace-pre-wrap font-mono")
 
     render()
-    ui.timer(1.0, render.refresh)
+
+    # The Protokoll expansion lives OUTSIDE the refreshable: a refresh would recreate
+    # it, collapsing its open state and discarding any text selection (reported
+    # 2026-09-03). Its content is updated in place instead.
+    with ui.expansion("Protokoll", icon="terminal").classes("w-full mt-2"):
+        log_label = ui.label("\n".join(job.progress[-60:]) or "—").classes(
+            "text-xs whitespace-pre-wrap font-mono"
+        )
+
+    # Refresh ONLY when the job actually changed; once it is finished, one final
+    # refresh and the timer stops — the page becomes fully static.
+    seen = {"version": job.version}
+
+    def poll() -> None:
+        if job.version == seen["version"]:
+            if job.status != "läuft":
+                timer.cancel()
+            return
+        seen["version"] = job.version
+        render.refresh()
+        log_label.set_text("\n".join(job.progress[-60:]) or "—")
+
+    timer = ui.timer(1.0, poll)
 
 
 @ui.page("/laeufe")

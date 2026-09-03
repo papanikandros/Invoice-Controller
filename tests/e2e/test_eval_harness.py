@@ -4,8 +4,10 @@ Scores REAL extractions with the typed metrics (tests/harness/metrics.py) agains
 the two ground truths that exist at the needed granularity:
 
 - EK4_204 recorded fixtures → offer POSITION-level scoring (pairing, amounts,
-  descriptions). atb/munk must stay at ceiling (they were validated perfect);
-  L&R only reports — its 11-vs-19 row shape is the known Q5 bundling ambiguity.
+  descriptions). All three must stay at ceiling: since the Q5 decision (2026-09-03,
+  bundle rows per the consultant's sheet + prompt rule R12) the L&R fixture is the
+  11-row bundled shape — the old 19-row fixture contained an LLM-fabricated
+  breakdown and was re-recorded.
 - ZePa VNE-Tabelle → invoice HEADER-level scoring (brutto/netto/date), the
   project whose Σ IK was validated to 0,01 €.
 
@@ -82,8 +84,9 @@ def test_offer_positions_against_ek4_204_fixtures():
 
     _write_baseline("offer_positions_ek4_204", per_offer)
 
-    # Ceiling contract for the two unambiguous offers; L&R reports only (Q5).
-    for stem in ("atb", "munk"):
+    # Ceiling contract for all three offers (L&R included since the Q5 bundle-rows
+    # decision + fixture re-record, 2026-09-03).
+    for stem in ("atb", "munk", "lr"):
         assert per_offer[stem]["recall"] == 1.0, per_offer[stem]
         assert per_offer[stem]["amount_accuracy"] == 1.0, per_offer[stem]
     assert per_offer["lr"]["cross_sum"], "L&R must still reconcile its cross-sum"

@@ -50,6 +50,10 @@ class Job:
     flags: list[str] = field(default_factory=list)      # review flags (not errors)
     errors: list[UserError] = field(default_factory=list)
     finished: datetime | None = None
+    # Bumped on every event — the job page refreshes ONLY when this changes, so an
+    # idle page never re-renders (re-rendering collapses expansions and kills text
+    # selection; fixed 2026-09-03).
+    version: int = 0
     _task: asyncio.Task | None = None
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -59,6 +63,7 @@ class Job:
         entry = {"ts": datetime.now().isoformat(timespec="seconds"),
                  "job": self.id, "procedure": self.procedure, "event": event, **data}
         with self._lock:
+            self.version += 1
             with (self.run_dir / "audit.jsonl").open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(entry, ensure_ascii=False, default=str) + "\n")
 
@@ -178,6 +183,10 @@ class JobStore:
                     if entry["event"] == "created":
                         job.title = entry.get("title", job.title)
                         job.created = datetime.fromisoformat(entry["ts"])
+                    elif entry["event"] == "progress":
+                        # HH:MM:SS prefix mirrors the live log format.
+                        stamp = entry["ts"][11:19] if len(entry["ts"]) >= 19 else ""
+                        job.progress.append(f"{stamp} {entry['message']}".strip())
                     elif entry["event"] == "file":
                         job.files[entry["file"]] = FileStatus(
                             entry["file"], entry["status"], entry.get("message", ""))

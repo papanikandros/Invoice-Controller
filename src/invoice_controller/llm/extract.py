@@ -79,6 +79,8 @@ CRITICAL RULES, in order of importance:
    - There is NO Nettosumme: leave totals.nettosumme (and the other totals) null. The cross-sum rule (R4) does NOT apply to statements — do not invent a total, do not force the lines to sum to anything.
    - header.vendor_name = the issuing company (the client itself); header.offer_number = the document's reference if it has one, else a short label like "Stellungnahme"; header.offer_date = the document date; header.title = a short subject if the letter has one.
    - Amounts are treated as netto (the funding basis) even though the document only says "Euro".
+
+(R12) PARTIAL BUNDLING / GROUP PRICES (decided 2026-09-03, mirrors the consultant's practice): when several numbered positions share ONE printed price (e.g. Pos 1-9 listed individually but only a single group total like '211.500,00' is printed), extract ONE position: pos = the range ('1-9'), description = a short combined label naming the bundled scope, line_total_net = the printed group price. NEVER invent a per-position breakdown the document does not print — fabricated sub-prices are the worst possible error. Positions with their OWN printed price always stay separate rows.
 """
 
 
