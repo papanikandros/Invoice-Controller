@@ -189,12 +189,17 @@ def compute_vne(
             flags.append("Rechnungsdatum außerhalb des Bewilligungszeitraums")
 
         if config.client is not None:
-            addr_ok = _address_matches(
-                inv.recipient_name if inv.recipient_address is None
-                else f"{inv.recipient_name or ''} {inv.recipient_address}",
-                config.client.name,
-                config.client.address,
-            )
+            # A1 (2026-09-03): on a masked run the deterministic pre-masking check is
+            # authoritative — the LLM never saw the recipient. Fallback: LLM fields.
+            if inv.recipient_local_ok is not None:
+                addr_ok = inv.recipient_local_ok
+            else:
+                addr_ok = _address_matches(
+                    inv.recipient_name if inv.recipient_address is None
+                    else f"{inv.recipient_name or ''} {inv.recipient_address}",
+                    config.client.name,
+                    config.client.address,
+                )
             if addr_ok is False:
                 flags.append(f"Rechnungsempfänger {inv.recipient_name!r} ≠ Antragsteller")
             elif addr_ok is None:

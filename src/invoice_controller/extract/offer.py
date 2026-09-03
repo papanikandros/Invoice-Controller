@@ -137,6 +137,7 @@ def extract_offer(
     *,
     with_narrative: bool = True,
     with_retry: bool = True,
+    mask: tuple[str, str | None] | None = None,
     summarize_agent: Agent[None, CostNarrative] | None = None,
 ) -> OfferDocument:
     pages = [normalize_text(p) for p in extract_pages(path)]
@@ -152,6 +153,15 @@ def extract_offer(
             method = "tesseract+llm"
         else:
             use_vision = True
+
+    # A1 (2026-09-03, PRIVACY.md §3): mask the known client out of the text payload;
+    # the vision path cannot mask (images).
+    masked = False
+    if mask is not None and not use_vision:
+        from invoice_controller.privacy import mask_client
+
+        pages = mask_client(pages, mask[0], mask[1]).pages
+        masked = True
 
     if use_vision:
         images = render_page_pngs(path)
@@ -205,6 +215,12 @@ def extract_offer(
         except Exception as exc:  # noqa: BLE001 — enrichment is best-effort by design
             print(f"  ! cost narrative skipped ({type(exc).__name__}: {exc})", file=sys.stderr)
 
+    if masked:
+        for field in ("customer_name", "customer_address"):
+            value = getattr(header, field)
+            if value and "[KUNDE" in value.upper():
+                setattr(header, field, None)
+
     return OfferDocument(
         source_path=path,
         header=header,
@@ -215,5 +231,6 @@ def extract_offer(
         vat_basis_unstated=(kind is DocumentKind.STATEMENT),
         narrative=narrative,
         grounding_check=grounding_check,
+        masked=masked,
         extraction_method=method,
     )

@@ -261,6 +261,11 @@ class InvoiceDocument(BaseModel):
     # R2 (2026-08-31): verbatim-amount grounding — stated amounts the LLM returned that
     # are NOT findable in the source text (text/Tesseract paths only). Flag, never block.
     grounding_check: AmountCheck | None = None
+    # A1 (2026-09-03): client identity was masked out of the LLM payload; the recipient
+    # check ran DETERMINISTICALLY on the raw text before masking (None = check not
+    # possible — no client configured, or vision path).
+    masked: bool = False
+    recipient_local_ok: bool | None = None
     amount_check: AmountCheck
     extraction_method: str = "pdfplumber+llm"
 
@@ -281,6 +286,8 @@ class OfferDocument(BaseModel):
     narrative: CostNarrative | None = None
     # R2 (2026-08-31): verbatim-amount grounding, see InvoiceDocument.grounding_check.
     grounding_check: AmountCheck | None = None
+    # A1 (2026-09-03): client identity masked out of the LLM payload (text path).
+    masked: bool = False
     extraction_method: str = "pdfplumber+llm"
 
     @property

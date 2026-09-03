@@ -72,6 +72,12 @@ class CostEstimation(Procedure):
         if not pdfs:
             raise ValueError("Keine PDF-Dateien hochgeladen.")
 
+        # A1: with a known client the text payload is masked (PRIVACY.md §3).
+        kunde = (params.get("kunde_name") or "").strip()
+        mask = (kunde, (params.get("kunde_adresse") or "").strip() or None) if kunde else None
+        if mask:
+            job.log("Kundendaten werden aus den LLM-Anfragen maskiert (Textpfad)")
+
         offers = []
         for pdf in pdfs:
             cls = classify_pdf(pdf)
@@ -82,7 +88,7 @@ class CostEstimation(Procedure):
             job.file_status(pdf.name, "läuft")
             job.log(f"Angebot: {pdf.name}")
             try:
-                offer = extract_offer(pdf)
+                offer = extract_offer(pdf, mask=mask)
             except Exception as exc:  # noqa: BLE001 — one bad file must not kill the batch
                 job.add_error(exc, filename=pdf.name)
                 continue
@@ -213,6 +219,19 @@ def _config_with_bescheid(job: Job, params: dict[str, str]):
         from invoice_controller.extract.bescheid import extract_eew_bescheid
 
         job.log(f"Zuwendungsbescheid: {', '.join(d.name for d in bescheid_docs)}")
+        # A1: the Empfänger is parsed DETERMINISTICALLY first (LLM-free name source
+        # for masking); the LLM extraction then fills the figures.
+        if config.client is None:
+            from invoice_controller.config import ClientConfig
+            from invoice_controller.pdf.text import extract_pages
+            from invoice_controller.privacy import parse_empfaenger
+
+            for doc in bescheid_docs:
+                parsed = parse_empfaenger("\n".join(extract_pages(doc)))
+                if parsed:
+                    config.client = ClientConfig(name=parsed[0], address=parsed[1])
+                    job.add_flag(f"Kunde deterministisch aus Bescheid: {parsed[0]}")
+                    break
         meta = extract_eew_bescheid(bescheid_docs)
         adopted = merge_bescheid_into_config(config, meta)
         if adopted:
@@ -377,7 +396,11 @@ PROCEDURES: tuple[Procedure, ...] = (
         key="eew-cost-estimation",
         label="EEW Kostenaufstellung (cost-estimation)",
         upload_hint="Angebots-PDFs des Projekts (auch Stellungnahmen/Schätzungen; Scans erlaubt)",
-        fields=(PROJEKT_FIELD,),
+        fields=(
+            PROJEKT_FIELD,
+            FieldSpec("kunde_name", "Kunde (Name — wird aus LLM-Anfragen maskiert)", placeholder="optional"),
+            FieldSpec("kunde_adresse", "Kunde (Adresse)", placeholder="optional"),
+        ),
     ),
     VneGeneration(
         key="eew-vne-generation",

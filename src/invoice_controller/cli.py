@@ -435,6 +435,8 @@ def beg_vne_generation(
 def kontrollmappe(
     project_dir: Path = typer.Argument(..., help="Project folder with offers + invoices"),
     projekt: str = typer.Option(..., "--projekt", help="Project name for the filename (e.g. EK4_204)"),
+    kunde_name: str = typer.Option(None, "--kunde-name", help="Client name — enables A1 masking + local recipient check"),
+    kunde_adresse: str = typer.Option(None, "--kunde-adresse", help="Client address (with --kunde-name)"),
     output: Path | None = typer.Option(None, "--output", "-o", help="Output .xlsx (default: Kontrollmappe_<Projekt>_<Datum>.xlsx in the folder)"),
     no_llm_matching: bool = typer.Option(False, "--no-llm-matching", help="Deterministic matching only"),
 ) -> None:
@@ -446,8 +448,14 @@ def kontrollmappe(
     from invoice_controller.kontrollmappe.build import build_kontrollmappe
     from invoice_controller.kontrollmappe.xlsx import kontrollmappe_filename, write_kontrollmappe
 
+    from invoice_controller.config import ClientConfig, ProjektConfig
+
+    config = ProjektConfig(
+        client=ClientConfig(name=kunde_name, address=kunde_adresse) if kunde_name else None
+    )
     result = build_kontrollmappe(
         project_dir,
+        config,
         with_llm=not no_llm_matching,
         on_progress=lambda m: console.print(f"[cyan]→ {m}[/cyan]"),
     )

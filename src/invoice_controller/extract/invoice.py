@@ -98,11 +98,21 @@ def _grounding_amounts(extracted: ExtractedInvoice) -> dict[str, Decimal | None]
     return amounts
 
 
+def _strip_masked_recipient(extracted: ExtractedInvoice) -> None:
+    """On a masked run the model sees [KUNDE]/[KUNDENADRESSE]; whatever it returns
+    for the recipient fields is placeholder residue, not data."""
+    for field in ("recipient_name", "recipient_address"):
+        value = getattr(extracted, field)
+        if value and "[KUNDE" in value.upper():
+            setattr(extracted, field, None)
+
+
 def extract_invoice(
     path: Path,
     agent: Agent[None, ExtractedInvoice] | None = None,
     *,
     with_retry: bool = True,
+    mask: tuple[str, str | None] | None = None,
 ) -> InvoiceDocument:
     # Tier 0 (R1, 2026-08-31): an embedded ZUGFeRD/Factur-X XML is the vendor's own
     # machine-readable invoice — exact amounts and line items, no OCR/LLM risk. The
@@ -138,12 +148,27 @@ def extract_invoice(
         else:
             use_vision = True
 
+    # A1 (2026-09-03, PRIVACY.md §3): with a known client, the recipient check runs
+    # on the RAW text, then the client identity is masked out of the LLM payload.
+    # The vision path cannot mask (images) — recorded as masked=False, check=None.
+    masked = False
+    recipient_local_ok: bool | None = None
+    if mask is not None and not use_vision:
+        from invoice_controller.privacy import mask_client
+
+        report = mask_client(pages, mask[0], mask[1])
+        pages = report.pages
+        masked = True
+        recipient_local_ok = report.recipient_found
+
     if use_vision:
         images = render_page_pngs(path)
         extracted = extract_invoice_llm_vision(images, source_path=path, agent=agent)
         method = "vision-llm"
     else:
         extracted = extract_invoice_llm(pages, source_path=path, agent=agent)
+    if masked:
+        _strip_masked_recipient(extracted)
 
     # Σ(line items) vs the stated total — the position-level guardrail (2026-08-28).
     # Loud, never blocking: a failure red-flags the row like the amount check.
@@ -164,6 +189,8 @@ def extract_invoice(
         retried_check = _position_check(retried)
         if retried_check.passed:
             extracted, position_check = retried, retried_check
+            if masked:
+                _strip_masked_recipient(extracted)
             method += "+retry"
 
     # R2: stated amounts must appear verbatim in the text the LLM read; the vision
@@ -183,6 +210,8 @@ def extract_invoice(
         amount_check=amount_check,
         position_check=position_check,
         grounding_check=grounding_check,
+        masked=masked,
+        recipient_local_ok=recipient_local_ok,
         extraction_method=method,
         **extracted.model_dump(),
     )

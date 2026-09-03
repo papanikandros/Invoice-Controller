@@ -32,6 +32,8 @@ def build_vne_tabelle(
     on_progress=None,
 ) -> VneResult:
     project_dir = Path(project_dir)
+    # A1: a configured client is masked out of every text-path LLM payload.
+    mask = (config.client.name, config.client.address) if config.client else None
     classified = classify_folder(project_dir)
     invoices_cls = [c for c in classified if c.doc_class is DocClass.INVOICE]
     offers_cls = [c for c in classified if c.doc_class is DocClass.OFFER]
@@ -48,7 +50,7 @@ def build_vne_tabelle(
         for c in offers_cls:
             if on_progress:
                 on_progress(f"Live-Extraktion (Angebot): {c.path.name}")
-            offers.append(extract_offer(c.path, with_narrative=False))
+            offers.append(extract_offer(c.path, with_narrative=False, mask=mask))
         ratios = from_offer_documents(offers)
         ratio_source = "live-extraction"
 
@@ -57,7 +59,7 @@ def build_vne_tabelle(
         if on_progress:
             on_progress(f"Rechnungs-Extraktion: {c.path.name}")
         try:
-            invoices.append(extract_invoice(c.path, agent=agent))
+            invoices.append(extract_invoice(c.path, agent=agent, mask=mask))
         except Exception as exc:  # noqa: BLE001 — one broken PDF must not kill the run
             print(f"  ! {c.path.name}: Extraktion fehlgeschlagen ({exc})", file=sys.stderr)
             ignored.append(c.path)

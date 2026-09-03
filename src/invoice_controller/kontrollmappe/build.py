@@ -191,6 +191,8 @@ def build_kontrollmappe(
     on_progress: ProgressFn = lambda _m: None,
 ) -> KontrollmappeResult:
     config = config or ProjektConfig()
+    # A1: a configured client is masked out of every text-path LLM payload.
+    mask = (config.client.name, config.client.address) if config.client else None
     if classified is None:
         classified = classify_folder(project_dir)
 
@@ -201,10 +203,10 @@ def build_kontrollmappe(
         try:
             if c.doc_class is DocClass.OFFER:
                 on_progress(f"Angebot: {c.path.name}")
-                offers.append(extract_offer(c.path, with_narrative=False))
+                offers.append(extract_offer(c.path, with_narrative=False, mask=mask))
             elif c.doc_class is DocClass.INVOICE:
                 on_progress(f"Rechnung: {c.path.name}")
-                invoices.append(extract_invoice(c.path))
+                invoices.append(extract_invoice(c.path, mask=mask))
         except Exception as exc:  # noqa: BLE001
             unreadable.append((c.path, f"{type(exc).__name__}: {exc}"))
 

@@ -217,9 +217,10 @@ def _pruefungen(wb: Workbook, result: KontrollmappeResult) -> None:
         cell = ws.cell(r, 4, {True: "ja", False: "NEIN", None: ""}[window])
         if window is False:
             cell.fill = _RED
-        ws.cell(r, 5, inv.recipient_name).alignment = _WRAP
+        ws.cell(r, 5, inv.recipient_name if not inv.masked else "[maskiert]").alignment = _WRAP
         if config.client is not None:
-            ok = _address_ok(inv, config.client.name)
+            # A1: masked runs carry the deterministic pre-masking check.
+            ok = inv.recipient_local_ok if inv.recipient_local_ok is not None else _address_ok(inv, config.client.name)
             acell = ws.cell(r, 6, {True: "ja", False: "NEIN", None: "nicht lesbar"}[ok])
             if ok is False:
                 acell.fill = _RED
