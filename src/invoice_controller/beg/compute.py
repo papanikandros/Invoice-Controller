@@ -73,22 +73,38 @@ def _vendor_key(name: str) -> frozenset[str]:
 
 
 def _fold_advances(invoices: list[InvoiceDocument]) -> tuple[list[InvoiceDocument], dict[int, int]]:
-    """Drop Anzahlungs-/Teilrechnungen whose vendor has a cumulative Schlussrechnung.
-    Returns (kept invoices, {id(schlussrechnung) → number of folded advances})."""
-    finals: dict[frozenset[str], InvoiceDocument] = {}
-    for inv in invoices:
-        if inv.invoice_type is InvoiceType.SCHLUSSRECHNUNG and inv.cumulative_netto is not None:
-            finals[_vendor_key(inv.vendor_name)] = inv
+    """Drop Anzahlungs-/Teilrechnungen — and pre-Schlussrechnung Gutschriften, which
+    correct an Abschlag and are already inside the SR's deducted advances (verified
+    on ZePa/MAFAC: 33.367,23 + 41.750,00 = the SR's 75.117,23) — whenever the vendor
+    has a cumulative Schlussrechnung. Vendor identity via overlap score, NOT exact
+    token equality: the same vendor extracts with slightly different name strings
+    across documents (the live ZePa finding, 2026-09-03).
+    Returns (kept invoices, {id(schlussrechnung) → number of folded documents})."""
+    from invoice_controller.match.vendor import _overlap_score
+
+    finals: list[tuple[frozenset[str], InvoiceDocument]] = [
+        (_vendor_key(inv.vendor_name), inv)
+        for inv in invoices
+        if inv.invoice_type is InvoiceType.SCHLUSSRECHNUNG and inv.cumulative_netto is not None
+    ]
 
     kept: list[InvoiceDocument] = []
     folded: dict[int, int] = {}
     for inv in invoices:
         key = _vendor_key(inv.vendor_name)
-        if (
-            inv.invoice_type in (InvoiceType.ANZAHLUNGSRECHNUNG, InvoiceType.TEILRECHNUNG)
-            and key in finals
-        ):
-            folded[id(finals[key])] = folded.get(id(finals[key]), 0) + 1
+        final = next(
+            (f for fk, f in finals if f is not inv and _overlap_score(set(fk), set(key)) > 0),
+            None,
+        )
+        foldable = inv.invoice_type in (
+            InvoiceType.ANZAHLUNGSRECHNUNG, InvoiceType.TEILRECHNUNG
+        ) or (
+            inv.invoice_type is InvoiceType.GUTSCHRIFT
+            and final is not None
+            and inv.invoice_date <= final.invoice_date
+        )
+        if final is not None and foldable:
+            folded[id(final)] = folded.get(id(final), 0) + 1
             continue
         kept.append(inv)
     return kept, folded

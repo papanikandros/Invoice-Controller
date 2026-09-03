@@ -199,40 +199,43 @@ def merge_bescheid_into_config(config, meta) -> list[str]:
     return adopted
 
 
+def _config_with_bescheid(job: Job, params: dict[str, str]):
+    """Config from the UI fields, then an uploaded Zuwendungsbescheid pre-fills the
+    gaps (2026-09-03, user request — typed fields always win, provenance flagged)."""
+    from invoice_controller.extract.classify import DocClass, classify_folder
+
+    config, config_flags = vne_config_from_params(params)
+    bescheid_docs = [
+        c.path for c in classify_folder(_inputs(job))
+        if c.doc_class is DocClass.ZUWENDUNGSBESCHEID
+    ]
+    if bescheid_docs:
+        from invoice_controller.extract.bescheid import extract_eew_bescheid
+
+        job.log(f"Zuwendungsbescheid: {', '.join(d.name for d in bescheid_docs)}")
+        meta = extract_eew_bescheid(bescheid_docs)
+        adopted = merge_bescheid_into_config(config, meta)
+        if adopted:
+            job.add_flag("aus Zuwendungsbescheid übernommen: " + "; ".join(adopted))
+        config_flags = [
+            f for f in config_flags
+            if not (("Zeitraum" in f and config.has_window)
+                    or ("Adressprüfung" in f and config.client is not None)
+                    or ("Förderbetrag-Block" in f and config.bescheid is not None
+                        and config.bescheid.foerderbetrag is not None))
+        ]
+    for flag in config_flags:
+        job.add_flag(flag)
+    return config
+
+
 @dataclass(frozen=True)
 class VneGeneration(Procedure):
     def run(self, job: Job, params: dict[str, str]) -> None:
-        from invoice_controller.extract.classify import DocClass, classify_folder
         from invoice_controller.extract.vne import build_vne_tabelle
         from invoice_controller.vne.xlsx import write_vne_tabelle
 
-        config, config_flags = vne_config_from_params(params)
-
-        # An uploaded Zuwendungsbescheid pre-fills what the colleague did not type
-        # (2026-09-03, user request — mirrors the BEG procedure's document-first rule).
-        bescheid_docs = [
-            c.path for c in classify_folder(_inputs(job))
-            if c.doc_class is DocClass.ZUWENDUNGSBESCHEID
-        ]
-        if bescheid_docs:
-            from invoice_controller.extract.bescheid import extract_eew_bescheid
-
-            job.log(f"Zuwendungsbescheid: {', '.join(d.name for d in bescheid_docs)}")
-            meta = extract_eew_bescheid(bescheid_docs)
-            adopted = merge_bescheid_into_config(config, meta)
-            if adopted:
-                job.add_flag("aus Zuwendungsbescheid übernommen: " + "; ".join(adopted))
-            # Degradation flags may no longer apply after the merge.
-            config_flags = [
-                f for f in config_flags
-                if not (("Zeitraum" in f and config.has_window)
-                        or ("Adressprüfung" in f and config.client is not None)
-                        or ("Förderbetrag-Block" in f and config.bescheid is not None
-                            and config.bescheid.foerderbetrag is not None))
-            ]
-        for flag in config_flags:
-            job.add_flag(flag)
-
+        config = _config_with_bescheid(job, params)
         result = build_vne_tabelle(_inputs(job), config, on_progress=job.log)
 
         if result.ratio_source == "none":
@@ -255,6 +258,41 @@ class VneGeneration(Procedure):
 
         out = job.run_dir / f"VNE-Tabelle_{_projekt(params)}.xlsx"
         write_vne_tabelle(result, config, out)
+        job.add_output(out)
+
+
+# --- eew kontrollmappe (R6) -------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Kontrollmappe(Procedure):
+    def run(self, job: Job, params: dict[str, str]) -> None:
+        from invoice_controller.kontrollmappe.build import build_kontrollmappe
+        from invoice_controller.kontrollmappe.xlsx import write_kontrollmappe
+        from invoice_controller.normalize import format_de_decimal
+
+        config = _config_with_bescheid(job, params)
+        result = build_kontrollmappe(_inputs(job), config, on_progress=job.log)
+
+        for flag in result.flags:
+            job.add_flag(flag)
+        for path, reason in result.unreadable:
+            job.add_error(RuntimeError(reason), filename=path.name)
+        for group in result.groups:
+            missing = sum(1 for r in group.rows if not r.matched and not r.offer_position.optional)
+            drift = sum(1 for r in group.rows if r.matched and r.variance not in (None, 0))
+            msg = (f"{len(group.rows)} Positionen, {drift} mit Abweichung (rot), "
+                   f"{missing} ohne Rechnung, {len(group.extras)} extra — "
+                   f"angeboten {format_de_decimal(group.offered_total)} € / "
+                   f"abgerechnet {format_de_decimal(group.invoiced_total)} €")
+            job.file_status(group.label, "hinweis" if (missing or drift or group.extras) else "ok", msg)
+        for c in result.ignored:
+            job.file_status(c.path.name, "hinweis", f"'{c.doc_class.value}' — ignoriert")
+
+        from invoice_controller.kontrollmappe.xlsx import kontrollmappe_filename
+
+        out = job.run_dir / kontrollmappe_filename((params.get("projekt") or "Projekt").strip())
+        write_kontrollmappe(result, out)
         job.add_output(out)
 
 
@@ -358,6 +396,18 @@ PROCEDURES: tuple[Procedure, ...] = (
             FieldSpec("agvo", "AGVO-Referenzkosten (€)", placeholder="optional"),
         ),
         with_zahlungsnachweise=False,
+    ),
+    Kontrollmappe(
+        key="eew-kontrollmappe",
+        label="EEW Kontrollmappe (Positionsabgleich)",
+        upload_hint="Angebote + alle Rechnungen des Projekts (PDFs); optional der Zuwendungsbescheid",
+        fields=(
+            PROJEKT_FIELD,
+            FieldSpec("kunde_name", "Kunde (Name)", placeholder="z. B. ZePa GmbH"),
+            FieldSpec("kunde_adresse", "Kunde (Adresse)", placeholder="Straße Nr., PLZ Ort"),
+            FieldSpec("zeitraum_von", "Bewilligungszeitraum von", placeholder="TT.MM.JJJJ"),
+            FieldSpec("zeitraum_bis", "Bewilligungszeitraum bis", placeholder="TT.MM.JJJJ"),
+        ),
     ),
     BegVneGeneration(
         key="beg-vne-generation",

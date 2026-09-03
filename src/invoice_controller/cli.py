@@ -432,6 +432,68 @@ def beg_vne_generation(
     console.print(f"\n[bold green]✓ geschrieben:[/bold green] {result.output_path}")
 
 
+def kontrollmappe(
+    project_dir: Path = typer.Argument(..., help="Project folder with offers + invoices"),
+    projekt: str = typer.Option(..., "--projekt", help="Project name for the filename (e.g. EK4_204)"),
+    output: Path | None = typer.Option(None, "--output", "-o", help="Output .xlsx (default: Kontrollmappe_<Projekt>_<Datum>.xlsx in the folder)"),
+    no_llm_matching: bool = typer.Option(False, "--no-llm-matching", help="Deterministic matching only"),
+) -> None:
+    """EEW Kontrollmappe — offers ↔ invoices position matching (Abgleich, Prüfungen, Summen).
+
+    Every match is a proposal; any variance ≠ 0 renders red (decision 2026-09-03).
+    Date/address checks need the Bewilligungszeitraum/Kunde inputs — the web UI
+    provides them; via CLI they stay blank (columns empty, never guessed)."""
+    from invoice_controller.kontrollmappe.build import build_kontrollmappe
+    from invoice_controller.kontrollmappe.xlsx import kontrollmappe_filename, write_kontrollmappe
+
+    result = build_kontrollmappe(
+        project_dir,
+        with_llm=not no_llm_matching,
+        on_progress=lambda m: console.print(f"[cyan]→ {m}[/cyan]"),
+    )
+    out = output or project_dir / kontrollmappe_filename(projekt)
+    write_kontrollmappe(result, out)
+
+    for g in result.groups:
+        missing = sum(1 for r in g.rows if not r.matched and not r.offer_position.optional)
+        exact = sum(1 for r in g.rows if r.matched and r.variance == 0)
+        console.print(
+            f"[bold]{g.label}[/bold]: {len(g.rows)} Angebotspositionen, "
+            f"{exact} exakt, {missing} ohne Rechnung, {len(g.extras)} extra"
+        )
+    for flag in result.flags:
+        console.print(f"[yellow]⚠ {flag}[/yellow]")
+    for path, reason in result.unreadable:
+        console.print(f"[red]✗ {path.name}: {reason}[/red]")
+    console.print(f"\n[bold green]→ geschrieben:[/bold green] {out}")
+
+
+def korrekturen(
+    original: Path = typer.Argument(..., help="Generated Kostenaufstellung .xlsx"),
+    corrected: Path = typer.Argument(..., help="Consultant-corrected copy"),
+    output: Path | None = typer.Option(None, "--output", "-o", help="korrekturen.jsonl (default: beside the corrected file)"),
+) -> None:
+    """Consultant corrections as machine-readable audit records (R8).
+
+    Semantic diff between the generated Kostenaufstellung and the consultant's
+    verified copy — every changed amount/description, added or removed position."""
+    from invoice_controller.audit.corrections import collect_corrections, write_corrections_jsonl
+
+    corrections = collect_corrections(original, corrected)
+    if not corrections:
+        console.print("[green]✓ keine Korrekturen[/green] — Dateien stimmen semantisch überein")
+        return
+    tbl = RichTable(title=f"{len(corrections)} Korrektur(en)", title_style="bold")
+    for col in ("Art", "Block", "Pos", "Feld", "Original", "Korrigiert"):
+        tbl.add_column(col)
+    for c in corrections:
+        tbl.add_row(c.scope, c.block[:38], c.pos or "", c.field or "", str(c.original or "")[:28], str(c.corrected or "")[:28])
+    console.print(tbl)
+    out = output or corrected.with_name("korrekturen.jsonl")
+    write_corrections_jsonl(corrections, out)
+    console.print(f"[bold green]→ geschrieben:[/bold green] {out}")
+
+
 def serve(
     host: str = typer.Option("127.0.0.1", "--host", help="Bind address (0.0.0.0 for LAN)"),
     port: int = typer.Option(8080, "--port", help="Port"),
@@ -455,6 +517,8 @@ eew_app.command("vne-generation")(vne_generation)
 eew_app.command("location-description")(location_description)
 beg_app.command("vne-generation")(beg_vne_generation)
 app.command("serve")(serve)
+eew_app.command("korrekturen")(korrekturen)
+eew_app.command("kontrollmappe")(kontrollmappe)
 
 
 if __name__ == "__main__":
