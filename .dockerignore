@@ -1,0 +1,15 @@
+# Never into the image: secrets, client data, scratch, local tooling.
+.env
+examples/
+tmp/
+research/
+Literature/
+.venv/
+.git/
+.playwright-mcp/
+node_modules/
+tests/
+PLAN.md
+PRIVACY.md
+test.py
+**/__pycache__/

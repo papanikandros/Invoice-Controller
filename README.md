@@ -49,6 +49,26 @@ with live per-file status; review flags and errors are shown loudly and logged t
 `audit.jsonl` (`tmp/webruns/`, last 20 runs kept). Set `IC_WEB_PASSWORD` in `.env` to enable the
 password gate — strongly recommended before exposing the port (e.g. `ngrok http --basic-auth "user:pw" 8080`).
 
+## Server deployment (Docker + Caddy)
+
+For a shared server, the compose stack runs the web UI behind a Caddy reverse proxy
+(automatic TLS + basic-auth as the outer layer; `IC_WEB_PASSWORD` stays the inner gate —
+this replaces the ngrok setup):
+
+```bash
+cp .env.example .env    # provider key + IC_WEB_PASSWORD + IC_WEB_STORAGE_SECRET
+# outer basic-auth credentials for Caddy:
+docker run --rm caddy:2-alpine caddy hash-password --plaintext 'choose-a-password'
+#   → put user + hash into .env as IC_BASIC_AUTH_USER / IC_BASIC_AUTH_HASH
+docker compose up -d --build
+```
+
+Reachable at `https://localhost` (internal CA) or set `IC_DOMAIN=your.domain` in `.env`
+for Let's Encrypt. The app port is never published on the host — Caddy is the only
+entrance. Run history persists in the `webruns` volume (last 20 runs; on a shared box,
+mind that it holds client documents). The image bundles tesseract+deu and poppler; the
+LLM key comes from `.env` at runtime and is never baked into the image.
+
 ## Run cost-estimation
 
 `invoice-controller eew cost-estimation <path>` accepts **either a single offer PDF or a directory** of PDFs. A directory is classified and only offer-classified PDFs are processed (skips Fragenkatalog, tool outputs, invoices, …).
