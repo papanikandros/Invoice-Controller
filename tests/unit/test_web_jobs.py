@@ -72,6 +72,22 @@ class TestJobStore:
 
         asyncio.run(scenario())
 
+    def test_raised_error_audits_traceback(self, tmp_path: Path, capsys) -> None:
+        job = JobStore(tmp_path).create("p", "t")
+        def failing_helper():
+            raise ZeroDivisionError("boom")
+        try:
+            failing_helper()
+        except ZeroDivisionError as exc:
+            job.add_error(exc)
+        job.add_error(RuntimeError("nie geworfen"), filename="a.pdf")
+
+        errors = [e for e in map(json.loads, (job.run_dir / "audit.jsonl").read_text().splitlines())
+                  if e["event"] == "error"]
+        assert "failing_helper" in errors[0]["traceback"]
+        assert "traceback" not in errors[1]
+        assert "failing_helper" in capsys.readouterr().err
+
     def test_retention_prunes_old_runs(self, tmp_path: Path) -> None:
         store = JobStore(tmp_path)
         for i in range(RETAIN_RUNS + 5):

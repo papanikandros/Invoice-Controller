@@ -17,7 +17,9 @@ from __future__ import annotations
 import asyncio
 import json
 import shutil
+import sys
 import threading
+import traceback
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -88,7 +90,17 @@ class Job:
         err = describe_error(exc, filename=filename)
         with self._lock:
             self.errors.append(err)
-        self._audit("error", error_class=err.error_class, message=err.message_de, detail=err.detail)
+        # The colleague only sees message_de; the traceback is for debugging the
+        # server afterwards (audit.jsonl + `docker compose logs`). Errors built from
+        # a plain reason string were never raised and carry none.
+        tb = ("".join(traceback.format_exception(exc))
+              if exc.__traceback__ is not None else None)
+        extra = {"traceback": tb} if tb else {}
+        self._audit("error", error_class=err.error_class, message=err.message_de,
+                    detail=err.detail, **extra)
+        if tb:
+            print(f"[job {self.id}] {err.error_class}: {err.message_de}\n{tb}",
+                  file=sys.stderr, flush=True)
         if filename:
             self.file_status(filename, "fehler", err.message_de)
         return err
