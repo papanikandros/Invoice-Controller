@@ -1,9 +1,11 @@
-# Invoice-Controller server deployment (todo #8, 2026-09-16):
-# app (NiceGUI web UI) behind a Caddy reverse proxy — Caddy is the ONLY published
-# entrance (TLS + basic-auth outer layer; IC_WEB_PASSWORD stays the inner gate).
+# Invoice-Controller server deployment: the NiceGUI web UI only.
+# TLS, hostnames and the outer basic-auth live in the SHARED Caddy stack
+# (~/Workspace/server-proxy → /opt/proxy on the server), which reaches this app
+# over the external docker network "proxy" under the alias "invoice-app".
+# The app port is never published on the host; IC_WEB_PASSWORD stays the inner gate.
 #
-#   cp .env.example .env        # fill provider key + IC_WEB_* + IC_BASIC_AUTH_*
-#   docker compose up -d --build
+#   cp .env.example .env        # provider key + IC_WEB_PASSWORD + IC_WEB_STORAGE_SECRET
+#   docker compose up -d --build   (the proxy stack must be up first: it creates the network)
 #
 # Ollama service deliberately left out for now (user decision 2026-09-16) — it
 # slots in here when A2 (local model routing) lands.
@@ -19,28 +21,14 @@ services:
       - webruns:/app/tmp/webruns
     expose:
       - "8080"          # container network only; never published on the host
-
-  caddy:
-    image: caddy:2-alpine
-    restart: unless-stopped
-    depends_on:
-      - app
-    ports:
-      - "80:80"
-      - "443:443"
-    environment:
-      # Domain for automatic TLS (Let's Encrypt). Leave default for a LAN box:
-      # "localhost" serves with Caddy's internal CA on https://localhost.
-      IC_DOMAIN: ${IC_DOMAIN:-localhost}
-      IC_BASIC_AUTH_USER: ${IC_BASIC_AUTH_USER:?set in .env}
-      # Generate with: docker run --rm caddy:2-alpine caddy hash-password --plaintext '...'
-      IC_BASIC_AUTH_HASH: ${IC_BASIC_AUTH_HASH:?set in .env}
-    volumes:
-      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
+    networks:
+      proxy:
+        aliases:
+          - invoice-app   # the name the shared Caddy proxies to
 
 volumes:
   webruns:
-  caddy_data:
-  caddy_config:
+
+networks:
+  proxy:
+    external: true      # created by the shared proxy stack
