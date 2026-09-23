@@ -252,6 +252,7 @@ def _config_with_bescheid(job: Job, params: dict[str, str]):
 class VneGeneration(Procedure):
     def run(self, job: Job, params: dict[str, str]) -> None:
         from invoice_controller.extract.vne import build_vne_tabelle
+        from invoice_controller.normalize import format_de_decimal
         from invoice_controller.vne.xlsx import write_vne_tabelle
 
         config = _config_with_bescheid(job, params)
@@ -275,43 +276,24 @@ class VneGeneration(Procedure):
         for path in result.ignored:
             job.file_status(path.name, "hinweis", "nicht Rechnung/Angebot — ignoriert")
 
+        abgleich = result.abgleich
+        if abgleich is not None and abgleich.skipped_reason:
+            job.add_flag(abgleich.skipped_reason)
+        elif abgleich is not None:
+            for group in abgleich.groups:
+                msg = (f"{len(group.rows)} Positionen, {group.drifted} mit Abweichung (rot), "
+                       f"{group.missing} ohne Rechnung, {len(group.extras)} extra — "
+                       f"angeboten {format_de_decimal(group.offered_total)} € / "
+                       f"abgerechnet {format_de_decimal(group.invoiced_total)} €")
+                clean = not (group.missing or group.drifted or group.extras)
+                job.file_status(f"Positionsabgleich: {group.label}", "ok" if clean else "hinweis", msg)
+            if abgleich.offerless_invoices:
+                job.add_flag(
+                    f"Positionsabgleich: {len(abgleich.offerless_invoices)} Rechnung(en) ohne Angebots-Lieferant — "
+                    + ", ".join(sorted({i.vendor_name for i in abgleich.offerless_invoices})))
+
         out = job.run_dir / f"VNE-Tabelle_{_projekt(params)}.xlsx"
         write_vne_tabelle(result, config, out)
-        job.add_output(out)
-
-
-# --- eew kontrollmappe (R6) -------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class Kontrollmappe(Procedure):
-    def run(self, job: Job, params: dict[str, str]) -> None:
-        from invoice_controller.kontrollmappe.build import build_kontrollmappe
-        from invoice_controller.kontrollmappe.xlsx import write_kontrollmappe
-        from invoice_controller.normalize import format_de_decimal
-
-        config = _config_with_bescheid(job, params)
-        result = build_kontrollmappe(_inputs(job), config, on_progress=job.log)
-
-        for flag in result.flags:
-            job.add_flag(flag)
-        for path, reason in result.unreadable:
-            job.add_error(RuntimeError(reason), filename=path.name)
-        for group in result.groups:
-            missing = sum(1 for r in group.rows if not r.matched and not r.offer_position.optional)
-            drift = sum(1 for r in group.rows if r.matched and r.variance not in (None, 0))
-            msg = (f"{len(group.rows)} Positionen, {drift} mit Abweichung (rot), "
-                   f"{missing} ohne Rechnung, {len(group.extras)} extra — "
-                   f"angeboten {format_de_decimal(group.offered_total)} € / "
-                   f"abgerechnet {format_de_decimal(group.invoiced_total)} €")
-            job.file_status(group.label, "hinweis" if (missing or drift or group.extras) else "ok", msg)
-        for c in result.ignored:
-            job.file_status(c.path.name, "hinweis", f"'{c.doc_class.value}' — ignoriert")
-
-        from invoice_controller.kontrollmappe.xlsx import kontrollmappe_filename
-
-        out = job.run_dir / kontrollmappe_filename((params.get("projekt") or "Projekt").strip())
-        write_kontrollmappe(result, out)
         job.add_output(out)
 
 
@@ -419,18 +401,6 @@ PROCEDURES: tuple[Procedure, ...] = (
             FieldSpec("agvo", "AGVO-Referenzkosten (€)", placeholder="optional"),
         ),
         with_zahlungsnachweise=False,
-    ),
-    Kontrollmappe(
-        key="eew-kontrollmappe",
-        label="EEW Kontrollmappe (Positionsabgleich)",
-        upload_hint="Angebote + alle Rechnungen des Projekts (PDFs); optional der Zuwendungsbescheid",
-        fields=(
-            PROJEKT_FIELD,
-            FieldSpec("kunde_name", "Kunde (Name)", placeholder="z. B. ZePa GmbH"),
-            FieldSpec("kunde_adresse", "Kunde (Adresse)", placeholder="Straße Nr., PLZ Ort"),
-            FieldSpec("zeitraum_von", "Bewilligungszeitraum von", placeholder="TT.MM.JJJJ"),
-            FieldSpec("zeitraum_bis", "Bewilligungszeitraum bis", placeholder="TT.MM.JJJJ"),
-        ),
     ),
     BegVneGeneration(
         key="beg-vne-generation",

@@ -50,6 +50,23 @@ class TestVariantsAndMasking:
         assert "Muster Haustechnik GmbH" in text
         assert "1.000,00" in text
 
+    def test_punctuation_and_spelling_drift_between_config_and_invoice(self) -> None:
+        """EK4_333 (2026-09-23): typed "MKT - Mannel Kunststofftechnik GmbH", printed
+        "MKT Mannel Kunststofftechnik" — exact matching flagged every invoice as
+        foreign and left the name unmasked in the LLM payload."""
+        name = "MKT - Mannel Kunststofftechnik GmbH"
+        printed = mask_client(["L & R Kältetechnik GmbH & Co.KG\nMKT Mannel Kunststofftechnik\n"
+                               "ANZAHLUNGSRECHNUNG\nMühlhofe 4b"], name, "Mühlhofe 4b, 58540 Meinerzhagen")
+        assert printed.recipient_found is True
+        assert "Mannel" not in printed.pages[0] and "[KUNDE]" in printed.pages[0]
+        assert "Kältetechnik" in printed.pages[0]                  # vendor untouched
+
+        typo = mask_client(["Rudi Sönnecken\nMKT Mannel Kunstofftechnik GmbH\n58540 Meinerzhagen"], name)
+        assert typo.recipient_found is True                       # 2-char slip tolerated
+
+        other = mask_client(["Kundennummer 193509 — Mannel & Söhne Metallbau"], name)
+        assert other.recipient_found is False
+
     def test_wrong_client_is_detected_not_masked_away(self) -> None:
         report = mask_client([PAGE], "Ganz Andere Firma GmbH", None)
         assert report.recipient_found is False

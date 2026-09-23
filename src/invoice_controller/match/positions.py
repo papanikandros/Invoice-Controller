@@ -5,7 +5,7 @@ every offer position on article number, description similarity, price proximity,
 and quantity; section context is deferred (v1 has no reliable section model).
 Many-to-many by design: several invoice positions (Anzahlung + Schlussrechnung,
 split deliveries) may map onto one offer line — aggregation happens in the
-Kontrollmappe builder, not here.
+Abgleich builder (vne/abgleich.py), not here.
 
 Every score is a PROPOSAL. Nothing here decides — the consultant confirms in the
 Abgleich sheet (Q1, 2026-09-03: any variance ≠ 0 renders red).

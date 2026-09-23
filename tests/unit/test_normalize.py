@@ -23,6 +23,11 @@ from invoice_controller.normalize import (
         ("0,00", Decimal("0.00")),
         ("-3,00 %", Decimal("-3.00")),
         ("Endbetrag 129.281,60 EUR", Decimal("129281.60")),
+        # Web-form input without thousands grouping (EK4_333, 2026-09-23: "82440" had
+        # become 824 €, the Bescheid states 82.440,00).
+        ("82440", Decimal("82440")),
+        ("82440,00", Decimal("82440.00")),
+        ("45", Decimal("45")),
     ],
 )
 def test_parse_de_decimal(raw: str, expected: Decimal) -> None:

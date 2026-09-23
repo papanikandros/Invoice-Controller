@@ -49,11 +49,14 @@ def _strip_glued_legal_forms(token: str) -> str:
 
 def _token_list(name: str) -> list[str]:
     s = name.lower().replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss")
-    s = re.sub(r"(\w)\s*&\s*(\w)", r"\1\2", s)
+    # Only single-letter initials collapse ("L&R" → "lr"); "GmbH & Co" must not
+    # become the token "gmbhco" that the legal-form strip then reduces to "gmbh" —
+    # that made every GmbH share a token (Gräfe matched the L&R block, 2026-09-23).
+    s = re.sub(r"\b(\w)\s*&\s*(\w)\b", r"\1\2", s)
     s = _LEGAL_FORMS.sub(" ", s)
     s = _NOISE.sub(" ", s)
     tokens = [_strip_glued_legal_forms(t) for t in s.split()]
-    return [t for t in tokens if len(t) >= 2]
+    return [t for t in tokens if len(t) >= 2 and t not in _GLUED_LEGAL_SUFFIXES]
 
 
 def normalize_vendor(name: str) -> set[str]:

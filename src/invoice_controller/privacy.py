@@ -11,6 +11,11 @@ deterministic comparison, then the masked run expects the recipient fields null.
 
 Corpus measurement (2026-09-03): client name verbatim in 72 % of text-layer docs,
 variant-only in 0 % — exact-string + variant replacement covers the text path.
+EK4_333 (2026-09-23) broke that assumption: the consultant typed "MKT - Mannel
+Kunststofftechnik GmbH", the invoices print "MKT Mannel Kunststofftechnik" (one
+even "Kunstofftechnik"). Exact matching flagged all seven invoices as foreign AND
+sent the name to the LLM unmasked. The check is therefore token-based (spelling
+slips tolerated) and the mask a punctuation-tolerant pattern over the name words.
 Scans/vision stay unmasked by design (PRIVACY.md §4): reduced exposure, never
 "anonymised".
 """
@@ -19,6 +24,9 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from difflib import SequenceMatcher
+
+from invoice_controller.match.vendor import _edit_distance_le_1, normalize_vendor
 
 KUNDE_PLACEHOLDER = "[KUNDE]"
 ADRESSE_PLACEHOLDER = "[KUNDENADRESSE]"
@@ -66,6 +74,58 @@ def build_variants(name: str, address: str | None = None) -> tuple[list[str], li
             sorted(addresses, key=len, reverse=True))
 
 
+_SEP = r"[\s\-–,.]*"
+_TRAILING_LEGAL = (
+    r"(?:[\s,.]*(?:gmbh\s*&\s*co\.?\s*kg|gmbh\s*&\s*cie\.?\s*kg|se\s*&\s*co\.?\s*kg"
+    r"|gmbh|ag|kg|ug|e\.\s*k\.|ohg|gbr|mbh)\b)?"
+)
+
+
+def _word_pattern(word: str) -> str:
+    """One name word with umlauts accepted in either spelling."""
+    out = []
+    for ch in word:
+        low = ch.lower()
+        if low in ("ä", "ö", "ü"):
+            out.append(f"(?:{ch}|{'aou'['äöü'.index(low)]}e)")
+        elif low == "ß":
+            out.append("(?:ß|ss)")
+        else:
+            out.append(re.escape(ch))
+    return "".join(out)
+
+
+def name_pattern(name: str) -> re.Pattern[str] | None:
+    """The client name as a regex: its words in order, any run of whitespace/dashes/
+    commas between them, legal form optional. Letters compared case-insensitively."""
+    core = _LEGAL_FORMS.sub("", name.strip()).strip(" ,")
+    words = [w for w in re.split(r"[\s\-–,.]+", core) if w]
+    if not words or sum(len(w) for w in words) < 4:
+        return None
+    body = _SEP.join(_word_pattern(w) for w in words)
+    return re.compile(rf"(?<![\w]){body}(?![\w]){_TRAILING_LEGAL}", re.IGNORECASE)
+
+
+def _close(t: str, h: str) -> bool:
+    """Spelling tolerance scaled to token length: one edit from five characters,
+    90 % similarity from twelve ("Kunststofftechnik" vs "Kunstofftechnik")."""
+    if t == h:
+        return True
+    if len(t) >= 5 and len(h) >= 5 and _edit_distance_le_1(t, h):
+        return True
+    return len(t) >= 12 and len(h) >= 12 and SequenceMatcher(None, t, h).ratio() >= 0.9
+
+
+def recipient_present(raw_text: str, name: str) -> bool:
+    """Every distinctive token of the client name occurs in the text, spelling
+    slips tolerated (see `_close`)."""
+    wanted = normalize_vendor(name)
+    if not wanted:
+        return False
+    have = normalize_vendor(raw_text)
+    return all(any(_close(t, h) for h in have) for t in wanted)
+
+
 def _replace_all(text: str, needles: list[str], placeholder: str) -> tuple[str, int]:
     hits = 0
     for needle in needles:
@@ -91,8 +151,9 @@ class MaskReport:
 def mask_client(pages: list[str], name: str, address: str | None = None) -> MaskReport:
     """Local recipient check on the raw text, THEN masking. Pure function."""
     name_variants, address_variants = build_variants(name, address)
+    pattern = name_pattern(name)
     raw = "\n".join(pages).lower()
-    recipient_found = any(v.lower() in raw for v in name_variants)
+    recipient_found = any(v.lower() in raw for v in name_variants) or recipient_present(raw, name)
     address_found = (
         any(v.lower() in raw for v in address_variants) if address_variants else None
     )
@@ -103,6 +164,9 @@ def mask_client(pages: list[str], name: str, address: str | None = None) -> Mask
         # address first: it may contain no name tokens but must not survive partially
         page, a = _replace_all(page, address_variants, ADRESSE_PLACEHOLDER)
         page, n = _replace_all(page, name_variants, KUNDE_PLACEHOLDER)
+        if pattern is not None:
+            page, n2 = pattern.subn(KUNDE_PLACEHOLDER, page)
+            n += n2
         # legal-form residue after a shorter name variant matched ("[KUNDE] GmbH")
         page = re.sub(
             r"\[KUNDE\]\s*(GmbH\s*&\s*Co\.?\s*KG|GmbH|AG|KG|UG|e\.\s*K\.|OHG|GbR|mbH)",

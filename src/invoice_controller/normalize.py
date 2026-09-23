@@ -11,7 +11,9 @@ GERMAN_MONTHS = {
     "oktober": 10, "november": 11, "dezember": 12,
 }
 
-_DECIMAL_RE = re.compile(r"-?\d{1,3}(?:\.\d{3})*(?:,\d+)?")
+# Grouped ("82.440,00") OR plain ("82440") digits — a typed 82440 must not be read as
+# its first three digits (EK4_333 live finding, 2026-09-23: Förderbetrag 824 €).
+_DECIMAL_RE = re.compile(r"-?(?:\d{1,3}(?:\.\d{3})+|\d+)(?:,\d+)?")
 _DATE_NUMERIC_RE = re.compile(r"(\d{1,2})\.(\d{1,2})\.(\d{4})")
 _DATE_NAMED_RE = re.compile(
     r"(\d{1,2})\.\s*(" + "|".join(GERMAN_MONTHS) + r")\s+(\d{4})",

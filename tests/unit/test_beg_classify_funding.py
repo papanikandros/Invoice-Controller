@@ -78,6 +78,21 @@ def test_classify_beg_filenames(name: str, expected: DocClass) -> None:
     assert got.doc_class is expected, f"{name}: {got.doc_class} ({got.reason})"
 
 
+def test_invoice_citing_its_auftragsbestaetigung_is_an_invoice() -> None:
+    """EK4_333 (2026-09-23): all five L&R invoices were dropped as 'other' because
+    the OTHER vocabulary (auftragsbestätigung) was checked before the invoice one."""
+    text = (
+        "L & R Kältetechnik GmbH & Co.KG, Hachener Straße 90a, 59846 Sundern\n"
+        "MKT Mannel Kunststofftechnik\nANZAHLUNGSRECHNUNG\nMühlhofe 4b Belegnummer: RG0018118\n"
+        "Wir berechnen Ihnen laut unserer Auftragsbestätigung - Nr.: 26-4132 vom 27.03.2026."
+    )
+    got = classify_pdf(Path("L&R-Kältetechnik-1. Ar-RG0018118-27.03.2026.pdf"), first_page_text=text)
+    assert got.doc_class is DocClass.INVOICE
+    # A document that is ONLY an order confirmation still lands in `other`.
+    only = classify_pdf(Path("scan.pdf"), first_page_text="Auftragsbestätigung Nr. 4711\nLieferung KW 32")
+    assert only.doc_class is DocClass.OTHER
+
+
 def test_classify_image_payment_proof_by_name_or_folder() -> None:
     got = classify_image(Path("Zahlungsnachweise/3eb9419c.jpeg"))
     assert got.doc_class is DocClass.ZAHLUNGSNACHWEIS

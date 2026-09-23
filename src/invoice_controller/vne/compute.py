@@ -19,11 +19,15 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from invoice_controller.config import ProjektConfig
 from invoice_controller.match.vendor import is_own_company, match_vendor, normalize_vendor
 from invoice_controller.models import InvoiceDocument, InvoiceType
 from invoice_controller.vne.ratios import VendorRatio, is_statement_block
+
+if TYPE_CHECKING:
+    from invoice_controller.vne.abgleich import AbgleichResult
 
 _CENT = Decimal("0.01")
 
@@ -89,6 +93,9 @@ class VneResult:
     mehrkosten: Decimal | None = None
     max_foerderbetrag: Decimal | None = None
     foerderbetrag_tatsaechlich: Decimal | None = None
+    # Scope check (vne/abgleich.py), attached by the orchestrator after compute_vne —
+    # it never feeds back into any figure above.
+    abgleich: AbgleichResult | None = None
 
     @property
     def sum_ik(self) -> Decimal:

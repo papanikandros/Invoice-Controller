@@ -21,6 +21,13 @@ from invoice_controller.extract.invoice import extract_invoice
 from invoice_controller.extract.offer import extract_offer
 from invoice_controller.llm.extract_invoice import ExtractedInvoice
 from invoice_controller.models import InvoiceDocument
+from invoice_controller.vne.abgleich import (
+    SKIPPED_NO_POSITIONS,
+    AbgleichResult,
+    blocks_from_kostenaufstellung_xlsx,
+    blocks_from_offer_documents,
+    build_abgleich,
+)
 from invoice_controller.vne.compute import VneResult, compute_vne
 from invoice_controller.vne.ratios import from_offer_documents, load_vendor_ratios
 
@@ -30,6 +37,7 @@ def build_vne_tabelle(
     config: ProjektConfig,
     agent: Agent[None, ExtractedInvoice] | None = None,
     on_progress=None,
+    with_llm_match: bool = True,
 ) -> VneResult:
     project_dir = Path(project_dir)
     # A1: a configured client is masked out of every text-path LLM payload.
@@ -44,9 +52,9 @@ def build_vne_tabelle(
     ]
 
     ratios, ratio_source = load_vendor_ratios(project_dir)
+    offers: list = []
     if not ratios and offers_cls:
         # No existing Kostenaufstellung — run cost-estimation extraction on the offers (LLM calls).
-        offers = []
         for c in offers_cls:
             if on_progress:
                 on_progress(f"Live-Extraktion (Angebot): {c.path.name}")
@@ -65,6 +73,27 @@ def build_vne_tabelle(
             ignored.append(c.path)
 
     invoices.sort(key=lambda i: (i.invoice_date, i.source_path.name))
-    return compute_vne(
+    result = compute_vne(
         invoices, ratios, config, ignored=ignored, ratio_source=ratio_source
     )
+
+    # Positionsabgleich: reuses what this run already has — no second extraction.
+    # The offer side follows the ratio source, so both rest on the same document.
+    if offers:
+        blocks, offer_source = blocks_from_offer_documents(offers), "Live-Extraktion der Angebote"
+    elif ratio_source.startswith("xlsx:"):
+        xlsx = project_dir / ratio_source.removeprefix("xlsx:")
+        blocks, offer_source = blocks_from_kostenaufstellung_xlsx(xlsx), xlsx.name
+    else:
+        blocks, offer_source = [], ""
+    if not blocks:
+        result.abgleich = AbgleichResult(skipped_reason=SKIPPED_NO_POSITIONS)
+        return result
+    # Unusable rows are out of every sum; the consultant's own fee has no vendor
+    # offer by design (fixed EK line) — neither belongs in a vendor scope check.
+    matchable = [r.invoice for r in result.invoices if not r.unusable and not r.own_company]
+    result.abgleich = build_abgleich(
+        blocks, matchable, offer_source=offer_source, with_llm=with_llm_match,
+        on_progress=on_progress or (lambda _m: None),
+    )
+    return result

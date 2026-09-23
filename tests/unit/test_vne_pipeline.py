@@ -114,6 +114,14 @@ def test_vendor_match_requires_token_overlap() -> None:
     assert match_vendor("Hofmann Kran-Vermietung", [_ratio("MAFAC"), _ratio("Eggersmann")]) is None
 
 
+def test_shared_legal_form_is_no_vendor_match() -> None:
+    """EK4_333 (2026-09-23): Gräfe's invoice was routed to the L&R block (97 % IK)
+    because "GmbH & Co" tokenised to a shared "gmbh"."""
+    ratios = [_ratio("L&R Kältetechnik GmbH & Co. KG")]
+    assert match_vendor("Gräfe Sanitär- und Heizungstechnik GmbH & Co.KG", ratios) is None
+    assert match_vendor("L & R Kältetechnik GmbH & Co.KG", ratios) is not None
+
+
 def test_own_company_detection() -> None:
     assert is_own_company("ENERGIEKONZEPT Krause GmbH")
     assert is_own_company("EnergieKonzept")

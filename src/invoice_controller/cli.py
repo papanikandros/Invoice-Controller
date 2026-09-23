@@ -145,8 +145,12 @@ def cost_estimation(
 def vne_generation(
     project_dir: Path = typer.Argument(..., help="Project folder with offers + invoices (+ optional projekt.yaml)"),
     output: Path | None = typer.Option(None, "--output", "-o", help="Output .xlsx (default: VNE-Tabelle.xlsx in the folder)"),
+    no_llm_matching: bool = typer.Option(False, "--no-llm-matching", help="Positionsabgleich: deterministic matching only"),
 ) -> None:
-    """EEW vne-generation — classify folder, extract invoices, split by cost-estimation ratios, write VNE-Tabelle.xlsx."""
+    """EEW vne-generation — classify folder, extract invoices, split by cost-estimation ratios, write VNE-Tabelle.xlsx.
+
+    The workbook's second sheet (Positionsabgleich) matches invoice positions to
+    offer positions per vendor; every match is a proposal, any variance ≠ 0 is red."""
     from invoice_controller.config import load_project_config
     from invoice_controller.extract.vne import build_vne_tabelle
     from invoice_controller.vne.xlsx import write_vne_tabelle
@@ -158,6 +162,7 @@ def vne_generation(
     result = build_vne_tabelle(
         project_dir, config,
         on_progress=lambda msg: console.print(f"[cyan]→ {msg}[/cyan]"),
+        with_llm_match=not no_llm_matching,
     )
 
     if result.ratio_source == "none":
@@ -223,6 +228,24 @@ def vne_generation(
     flagged = [r for r in result.invoices if r.flags]
     if flagged:
         console.print(f"[bold red]⚠ {len(flagged)} Rechnung(en) mit Prüf-Hinweisen[/bold red] — im .xlsx rot markiert")
+
+    abgleich = result.abgleich
+    if abgleich is not None and abgleich.skipped_reason:
+        console.print(f"[yellow]ⓘ {abgleich.skipped_reason}[/yellow]")
+    elif abgleich is not None:
+        console.print(f"[bold]Positionsabgleich[/bold] (Angebotspositionen aus {abgleich.offer_source}):")
+        for g in abgleich.groups:
+            clean = not (g.missing or g.drifted or g.extras)
+            color = "green" if clean else "yellow"
+            console.print(
+                f"  [{color}]{g.label}: {len(g.rows)} Angebotspositionen, {g.drifted} mit Abweichung, "
+                f"{g.missing} ohne Rechnung, {len(g.extras)} extra[/{color}]"
+            )
+        if abgleich.offerless_invoices:
+            console.print(
+                f"  [yellow]{len(abgleich.offerless_invoices)} Rechnung(en) ohne Angebots-Lieferant: "
+                + ", ".join(sorted({i.vendor_name for i in abgleich.offerless_invoices})) + "[/yellow]"
+            )
 
     if output is None:
         output = project_dir / "VNE-Tabelle.xlsx"
@@ -432,50 +455,6 @@ def beg_vne_generation(
     console.print(f"\n[bold green]✓ geschrieben:[/bold green] {result.output_path}")
 
 
-def kontrollmappe(
-    project_dir: Path = typer.Argument(..., help="Project folder with offers + invoices"),
-    projekt: str = typer.Option(..., "--projekt", help="Project name for the filename (e.g. EK4_204)"),
-    kunde_name: str = typer.Option(None, "--kunde-name", help="Client name — enables A1 masking + local recipient check"),
-    kunde_adresse: str = typer.Option(None, "--kunde-adresse", help="Client address (with --kunde-name)"),
-    output: Path | None = typer.Option(None, "--output", "-o", help="Output .xlsx (default: Kontrollmappe_<Projekt>_<Datum>.xlsx in the folder)"),
-    no_llm_matching: bool = typer.Option(False, "--no-llm-matching", help="Deterministic matching only"),
-) -> None:
-    """EEW Kontrollmappe — offers ↔ invoices position matching (Abgleich, Prüfungen, Summen).
-
-    Every match is a proposal; any variance ≠ 0 renders red (decision 2026-09-03).
-    Date/address checks need the Bewilligungszeitraum/Kunde inputs — the web UI
-    provides them; via CLI they stay blank (columns empty, never guessed)."""
-    from invoice_controller.kontrollmappe.build import build_kontrollmappe
-    from invoice_controller.kontrollmappe.xlsx import kontrollmappe_filename, write_kontrollmappe
-
-    from invoice_controller.config import ClientConfig, ProjektConfig
-
-    config = ProjektConfig(
-        client=ClientConfig(name=kunde_name, address=kunde_adresse) if kunde_name else None
-    )
-    result = build_kontrollmappe(
-        project_dir,
-        config,
-        with_llm=not no_llm_matching,
-        on_progress=lambda m: console.print(f"[cyan]→ {m}[/cyan]"),
-    )
-    out = output or project_dir / kontrollmappe_filename(projekt)
-    write_kontrollmappe(result, out)
-
-    for g in result.groups:
-        missing = sum(1 for r in g.rows if not r.matched and not r.offer_position.optional)
-        exact = sum(1 for r in g.rows if r.matched and r.variance == 0)
-        console.print(
-            f"[bold]{g.label}[/bold]: {len(g.rows)} Angebotspositionen, "
-            f"{exact} exakt, {missing} ohne Rechnung, {len(g.extras)} extra"
-        )
-    for flag in result.flags:
-        console.print(f"[yellow]⚠ {flag}[/yellow]")
-    for path, reason in result.unreadable:
-        console.print(f"[red]✗ {path.name}: {reason}[/red]")
-    console.print(f"\n[bold green]→ geschrieben:[/bold green] {out}")
-
-
 def korrekturen(
     original: Path = typer.Argument(..., help="Generated Kostenaufstellung .xlsx"),
     corrected: Path = typer.Argument(..., help="Consultant-corrected copy"),
@@ -526,7 +505,6 @@ eew_app.command("location-description")(location_description)
 beg_app.command("vne-generation")(beg_vne_generation)
 app.command("serve")(serve)
 eew_app.command("korrekturen")(korrekturen)
-eew_app.command("kontrollmappe")(kontrollmappe)
 
 
 if __name__ == "__main__":

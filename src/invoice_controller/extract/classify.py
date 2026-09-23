@@ -179,10 +179,14 @@ def classify_pdf(path: Path, first_page_text: str | None = None) -> Classified:
             return Classified(path, DocClass.ZUWENDUNGSBESCHEID, "first-page text")
         if _ZAHLUNG_TEXT_RE.search(first_page_text):
             return Classified(path, DocClass.ZAHLUNGSNACHWEIS, "first-page text")
-        if _OTHER_TEXT_RE.search(first_page_text):
-            return Classified(path, DocClass.OTHER, "first-page text")
+        # Invoice signals outrank the OTHER vocabulary: invoices routinely cite the
+        # order they bill ("laut unserer Auftragsbestätigung Nr. …") — EK4_333 lost all
+        # five L&R invoices to that (2026-09-23). A contract that merely says
+        # "Rechnung" lands as a loud, flagged invoice instead of vanishing.
         if _INVOICE_TEXT_RE.search(first_page_text):
             return Classified(path, DocClass.INVOICE, "first-page text")
+        if _OTHER_TEXT_RE.search(first_page_text):
+            return Classified(path, DocClass.OTHER, "first-page text")
         if _OFFER_TEXT_RE.search(first_page_text):
             return Classified(path, DocClass.OFFER, "first-page text")
 

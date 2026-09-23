@@ -14,6 +14,10 @@ formulas are a polish candidate (raw-XML post-pass like the cost-estimation .ods
 
 Every failed check renders as a red-filled row with the ⚠ reason in the
 Anmerkung column — same loud-not-silent rule as the cost-estimation workbook.
+
+The scope check (vne/abgleich.py) lives on a SECOND sheet, `Positionsabgleich`:
+the VNE-Maske sheet must stay identical to the consultant's examples (user
+requirement 2026-09-21), so nothing of the Abgleich is written into it.
 """
 
 from __future__ import annotations
@@ -27,9 +31,12 @@ from openpyxl.worksheet.worksheet import Worksheet
 
 from invoice_controller.config import ProjektConfig
 from invoice_controller.models import InvoiceType
+from invoice_controller.normalize import format_de_decimal
+from invoice_controller.vne.abgleich import AbgleichResult
 from invoice_controller.vne.compute import VneResult
 
 SHEET_NAME = "(Vorlage VNE-Maske)"
+ABGLEICH_SHEET_NAME = "Positionsabgleich"
 
 _HEADERS = [
     "Empfänger\nVerwendungszweck/Referenz\nBetreff",   # A
@@ -60,6 +67,8 @@ _EUR = "#,##0.00\\ €"
 _DATE = "DD.MM.YYYY"
 _PCT = "0.0000"
 _RED_FILL = PatternFill(start_color="FFCCCC", end_color="FFCCCC", fill_type="solid")
+_YELLOW_FILL = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
+_PCT_DISPLAY = "0.0%"
 _BOLD = Font(bold=True)
 _WRAP = Alignment(wrap_text=True, vertical="top")
 
@@ -208,4 +217,95 @@ def write_vne_tabelle(result: VneResult, config: ProjektConfig, output_path: Pat
     for col, width in widths.items():
         ws.column_dimensions[openpyxl.utils.get_column_letter(col)].width = width
 
+    if result.abgleich is not None:
+        _write_abgleich(wb.create_sheet(ABGLEICH_SHEET_NAME), result.abgleich)
+
     wb.save(output_path)
+
+
+def _write_abgleich(ws: Worksheet, abgleich: AbgleichResult) -> None:
+    ws.cell(1, 1, "Positionsabgleich Angebot ↔ Rechnungen (Vorschlag — bitte prüfen)").font = _BOLD
+    if abgleich.skipped_reason:
+        ws.cell(2, 1, abgleich.skipped_reason).fill = _YELLOW_FILL
+        ws.column_dimensions["A"].width = 120
+        return
+    ws.cell(2, 1, f"Angebotspositionen aus: {abgleich.offer_source}")
+
+    labels = ["Pos", "Beschreibung (Angebot)", "angeboten €", "abgerechnet €", "Abweichung €",
+              "Abw. %", "Konfidenz", "Rechnungszeilen", "Hinweis"]
+    for c, label in enumerate(labels, start=1):
+        ws.cell(4, c, label).font = _BOLD
+
+    r = 6
+    for g in abgleich.groups:
+        ws.cell(r, 1, f"Lieferant: {g.label}").font = _BOLD
+        r += 1
+        for row in g.rows:
+            pos = row.offer_position
+            ws.cell(r, 1, pos.pos)
+            ws.cell(r, 2, pos.description).alignment = _WRAP
+            _money(ws, r, 3, row.offered)
+            if not row.matched:
+                if pos.optional:
+                    ws.cell(r, 9, "optional, nicht abgerufen")
+                else:
+                    ws.cell(r, 9, "FEHLT — keine Rechnungszeile zugeordnet").fill = _RED_FILL
+                r += 1
+                continue
+            _money(ws, r, 4, row.invoiced)
+            variance = row.variance
+            _money(ws, r, 5, variance)
+            if variance is not None and row.offered not in (None, Decimal(0)):
+                ws.cell(r, 6, float(variance / row.offered)).number_format = _PCT_DISPLAY
+            # Q1 (2026-09-03): ANY variance ≠ 0 → red, consultant decides.
+            if variance is not None and variance != 0:
+                ws.cell(r, 5).fill = _RED_FILL
+                ws.cell(r, 6).fill = _RED_FILL
+            # "high" < "medium" alphabetically, so max() surfaces the weakest link.
+            conf = max(m.confidence.value for m in row.matched)
+            ws.cell(r, 7, conf)
+            if conf != "high":
+                ws.cell(r, 7).fill = _YELLOW_FILL
+            ws.cell(r, 8, "; ".join(
+                f"{m.invoice.invoice_number}#{m.invoice.positions[m.position_index].pos or m.position_index + 1}"
+                for m in row.matched
+            )).alignment = _WRAP
+            notes = "; ".join(dict.fromkeys(m.note for m in row.matched if m.note))
+            if notes:
+                ws.cell(r, 9, notes).alignment = _WRAP
+            r += 1
+        for extra in g.extras:
+            inv_pos = extra.invoice.positions[extra.position_index]
+            ws.cell(r, 1, "EXTRA").fill = _RED_FILL
+            ws.cell(r, 2, inv_pos.description).alignment = _WRAP
+            _money(ws, r, 4, extra.amount)
+            ws.cell(r, 8, f"{extra.invoice.invoice_number}#{inv_pos.pos or extra.position_index + 1}")
+            ws.cell(r, 9, extra.note or "keine Angebotsposition zugeordnet").fill = _RED_FILL
+            r += 1
+
+        ws.cell(r, 1, "Σ").font = _BOLD
+        ws.cell(r, 2, f"Summe {g.label} (ohne optionale Positionen)").font = _BOLD
+        _money(ws, r, 3, g.offered_total, bold=True)
+        _money(ws, r, 4, g.invoiced_total, bold=True)
+        diff = g.invoiced_total - g.offered_total
+        _money(ws, r, 5, diff, bold=True)
+        if diff != 0:
+            ws.cell(r, 5).fill = _RED_FILL
+        if not g.invoices:
+            ws.cell(r, 9, "keine Rechnung dieses Lieferanten im Lauf").fill = _RED_FILL
+        elif g.sonderpreis is not None:
+            ws.cell(r, 9, f"Sonderpreis lt. Angebot: {format_de_decimal(g.sonderpreis)} €")
+        r += 2
+
+    if abgleich.offerless_invoices:
+        ws.cell(r, 1, "Rechnungen ohne Angebots-Lieferant").font = _BOLD
+        r += 1
+        for inv in abgleich.offerless_invoices:
+            ws.cell(r, 2, f"{inv.vendor_name} — {inv.invoice_number}")
+            _money(ws, r, 4, inv.netto)
+            ws.cell(r, 9, "kein Angebot dieses Lieferanten (ggf. lt. Schätzung)").fill = _RED_FILL
+            r += 1
+
+    for letter, width in {"A": 10, "B": 46, "C": 14, "D": 14, "E": 14, "F": 9,
+                          "G": 10, "H": 26, "I": 44}.items():
+        ws.column_dimensions[letter].width = width
