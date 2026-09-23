@@ -43,8 +43,10 @@ The provider preference order is **OpenRouter → OpenAI → Gemini → Anthropi
 
 ## Web UI (`serve`)
 
-`invoice-controller serve [--host 0.0.0.0] [--port 8080]` starts the browser UI (German): select a
-procedure, upload the documents, press start, download the result. Runs execute in the background
+`invoice-controller serve [--host 0.0.0.0] [--port 8080]` starts the browser UI (German, styled to the
+EnergieKonzept-Krause brand — tokens in `web/theme.py`, font and logo vendored under `web/static/`):
+choose the funding program (EEW or BEG), pick the procedure tab, upload the documents, press start,
+download the result. Runs execute in the background
 with live per-file status; review flags and errors are shown loudly and logged to a per-run
 `audit.jsonl` (`tmp/webruns/`, last 20 runs kept). Set `IC_WEB_PASSWORD` in `.env` to enable the
 password gate — strongly recommended before exposing the port (e.g. `ngrok http --basic-auth "user:pw" 8080`).

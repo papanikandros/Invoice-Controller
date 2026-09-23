@@ -169,7 +169,10 @@ class TestBescheidMerge:
         from decimal import Decimal
 
         from invoice_controller.extract.bescheid import EewBescheidMeta
-        from invoice_controller.web.registry import merge_bescheid_into_config, vne_config_from_params
+        from invoice_controller.web.registry import (
+            merge_bescheid_into_config,
+            vne_config_from_params,
+        )
 
         config, _ = vne_config_from_params({"foerderbetrag": "50.000,00"})
         meta = EewBescheidMeta(
@@ -190,8 +193,31 @@ class TestBescheidMerge:
 
     def test_empty_meta_adopts_nothing(self) -> None:
         from invoice_controller.extract.bescheid import EewBescheidMeta
-        from invoice_controller.web.registry import merge_bescheid_into_config, vne_config_from_params
+        from invoice_controller.web.registry import (
+            merge_bescheid_into_config,
+            vne_config_from_params,
+        )
 
         config, _ = vne_config_from_params({})
         assert merge_bescheid_into_config(config, EewBescheidMeta()) == []
         assert config.client is None and not config.has_window
+
+
+class TestProgramRegistry:
+    def test_every_procedure_belongs_to_exactly_one_program(self) -> None:
+        """The start page offers the program first (2026-09-24); a procedure without
+        a program would be unreachable, one in two programs would run twice."""
+        from invoice_controller.web.registry import (
+            PROCEDURES,
+            PROGRAMS,
+            procedures_for,
+            program_by_key,
+        )
+
+        seen = [p.key for prog in PROGRAMS for p in procedures_for(prog)]
+        assert sorted(seen) == sorted(p.key for p in PROCEDURES)
+        assert len(seen) == len(set(seen))
+        for prog in PROGRAMS:
+            assert program_by_key(prog.key) is prog
+            assert all(p.key.startswith(prog.key + "-") for p in procedures_for(prog))
+        assert program_by_key("laeufe") is None          # the history route must not be a program

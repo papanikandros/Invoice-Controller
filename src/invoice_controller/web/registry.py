@@ -44,6 +44,7 @@ class Procedure:
     key: str
     label: str
     upload_hint: str
+    program: str = "EEW"                     # funding-program family: key into PROGRAMS
     fields: tuple[FieldSpec, ...] = ()
     with_zahlungsnachweise: bool = False     # extra labeled dropzone
     accept: str = ".pdf"
@@ -373,6 +374,40 @@ class LocationDescription(Procedure):
         job.add_output(out)
 
 
+@dataclass(frozen=True)
+class Program:
+    key: str            # URL segment
+    label: str
+    title: str
+    description: str
+
+
+# The colleague chooses the funding-program family FIRST (user decision 2026-09-24),
+# then sees only that program's procedures as tabs.
+PROGRAMS: tuple[Program, ...] = (
+    Program(
+        key="eew", label="EEW",
+        title="EEW Modul 4",
+        description="Bundesförderung für Energie- und Ressourceneffizienz in der Wirtschaft — "
+                    "Investitionsprojekte gewerblicher Kunden (BAFA).",
+    ),
+    Program(
+        key="beg", label="BEG",
+        title="BEG",
+        description="Bundesförderung für effiziente Gebäude — Effizienzhaus und Einzelmaßnahmen "
+                    "(KfW / BAFA), überwiegend private Bauherren.",
+    ),
+)
+
+
+def program_by_key(key: str) -> Program | None:
+    return next((p for p in PROGRAMS if p.key == key), None)
+
+
+def procedures_for(program: Program) -> tuple[Procedure, ...]:
+    return tuple(p for p in PROCEDURES if p.program == program.label)
+
+
 PROCEDURES: tuple[Procedure, ...] = (
     CostEstimation(
         key="eew-cost-estimation",
@@ -404,6 +439,7 @@ PROCEDURES: tuple[Procedure, ...] = (
     ),
     BegVneGeneration(
         key="beg-vne-generation",
+        program="BEG",
         label="BEG Kostenzusammenstellung (vne-generation)",
         upload_hint="Rechnungen + Antragsbestätigung/BzA + Zuwendungsbescheid (PDFs)",
         fields=(PROJEKT_FIELD, FieldSpec(
