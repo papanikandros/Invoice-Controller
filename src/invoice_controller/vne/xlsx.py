@@ -63,9 +63,13 @@ _HEADERS = [
     "ansetzbar\nEK",                                   # V
 ]
 
-_EUR = "#,##0.00\\ €"
+# Number formats copied from the consultant's own VNE sheets (examples/Craemer):
+# the Anteil column DISPLAYS "97,12 %". Writing the same ratio with "0.0000" showed
+# "0.9712", which read as "not our Kostenaufstellung percentages" (colleague
+# feedback on EK4_333, 2026-09-24) although the value was exactly that.
+_EUR = "#,##0.00\\ [$€-407];[RED]\\-#,##0.00\\ [$€-407]"
 _DATE = "DD.MM.YYYY"
-_PCT = "0.0000"
+_PCT = "0.00\\\xa0%"
 _RED_FILL = PatternFill(start_color="FFCCCC", end_color="FFCCCC", fill_type="solid")
 _YELLOW_FILL = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
 _PCT_DISPLAY = "0.0%"
@@ -157,7 +161,7 @@ def write_vne_tabelle(result: VneResult, config: ProjektConfig, output_path: Pat
             r += 1
 
         ws.cell(r, 7, "Skonto")
-        ws.cell(r, 8, float(row.skonto_rate)).number_format = "0.00%"
+        ws.cell(r, 8, float(row.skonto_rate)).number_format = _PCT
         r += 1
 
         if flagged:
