@@ -23,6 +23,8 @@ against BOTH would double-count the invoiced side.
 
 from __future__ import annotations
 
+import re
+import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -36,16 +38,22 @@ from invoice_controller.match.positions import (
 )
 from invoice_controller.match.vendor import _overlap_score, normalize_vendor
 from invoice_controller.models import DocumentKind, InvoiceDocument, OfferDocument, Position
-from invoice_controller.vne.ratios import _STATEMENT_BLOCK_RE, vendor_from_header
+from invoice_controller.normalize import format_de_decimal
+from invoice_controller.vne.ratios import _BLOCK_HEADER, _STATEMENT_BLOCK_RE, vendor_from_header
 
 ProgressFn = Callable[[str], None]
 
 _LLM_CONFIDENCE_FLOOR = 0.55   # an LLM pair below this stays unmatched
+_LUMP_TOLERANCE = Decimal("0.02")
 
 SKIPPED_NO_POSITIONS = (
-    "Positionsabgleich übersprungen — Angebotspositionen sind nur aus der "
-    "Kostenaufstellung.xlsx oder aus Angebots-PDFs lesbar (nicht aus .ods/PDF-Kostenaufstellungen)"
+    "Positionsabgleich übersprungen — keine Angebotspositionen lesbar (Kostenaufstellung als "
+    ".xlsx oder PDF hochladen, oder die Angebots-PDFs ohne Kostenaufstellung)"
 )
+
+_MONEY_EUR = re.compile(r"(-?\d{1,3}(?:\.\d{3})*,\d{2})\s*€")
+_PDF_POSITION = re.compile(r"^\s{0,4}(\d+(?:[.\-–]\d+)*)\s+(\S.*)$")
+_PDF_SKIP = re.compile(r"^\s*(Position\s+Beschreibung|Σ|Sonderpreis|Nettosumme lt\.|Kostenaufstellung\s*$)|\d+,\d{2}\s*%")
 
 
 @dataclass
@@ -197,6 +205,69 @@ def blocks_from_kostenaufstellung_xlsx(path: Path) -> list[OfferBlock]:
     return [blk for blk in blocks if blk.positions]
 
 
+def blocks_from_kostenaufstellung_pdf(path: Path) -> list[OfferBlock]:
+    """The consultant-built Kostenaufstellung PDF (EK4_333's workflow, 2026-09-24):
+    the same document that already serves the ratios carries every position row."""
+    text = subprocess.run(
+        ["pdftotext", "-layout", str(path), "-"], capture_output=True, text=True, check=True
+    ).stdout
+    return blocks_from_layout_text(text)
+
+
+def blocks_from_layout_text(text: str) -> list[OfferBlock]:
+    """`pdftotext -layout` of a Kostenaufstellung: a position row is "<Pos> <text> <G> € <IK> € <NK> €".
+    A wrapped description prints its extra lines above/below the numbered line
+    (vertically centred cell), so a text-only line joins the neighbouring position:
+    the previous one while that still lacks a trailing line, else the next one."""
+    blocks: list[OfferBlock] = []
+    current: OfferBlock | None = None
+    last: Position | None = None
+    last_has_suffix = False
+    prefix: list[str] = []
+
+    def flush_prefix_into(pos: Position) -> None:
+        nonlocal prefix
+        if prefix:
+            pos.description = " ".join(prefix + [pos.description])
+            prefix = []
+
+    for raw in text.splitlines():
+        line = raw.rstrip()
+        stripped = line.strip()
+        if not stripped or "\f" in stripped:
+            continue
+        m_pos = _PDF_POSITION.match(line)
+        if not m_pos and _BLOCK_HEADER.search(stripped):
+            current, last, last_has_suffix, prefix = None, None, False, []
+            if not _STATEMENT_BLOCK_RE.search(stripped):
+                current = OfferBlock(label=vendor_from_header(stripped), positions=[])
+                blocks.append(current)
+            continue
+        if current is None:
+            continue
+        if _PDF_SKIP.search(line):
+            if stripped.startswith("Σ"):
+                last, last_has_suffix, prefix = None, False, []
+            continue
+        monies = _MONEY_EUR.findall(line)
+        if m_pos and len(monies) >= 3:
+            desc = _MONEY_EUR.split(m_pos.group(2))[0].strip()
+            pos = Position(pos=m_pos.group(1), description=desc, line_total_net=Decimal(monies[0].replace(".", "").replace(",", ".")),
+                           optional="option" in desc.lower())
+            flush_prefix_into(pos)
+            current.positions.append(pos)
+            last, last_has_suffix = pos, False
+            continue
+        if monies:
+            continue          # a stray money line (e.g. a Σ row wrapped onto its own line)
+        if last is not None and not last_has_suffix:
+            last.description = f"{last.description} {stripped}"
+            last_has_suffix = True
+        else:
+            prefix.append(stripped)
+    return [blk for blk in blocks if blk.positions]
+
+
 # ---------------------------------------------------------------------------
 # Matching
 # ---------------------------------------------------------------------------
@@ -218,7 +289,30 @@ def _match_group(group: VendorGroup, *, with_llm: bool, on_progress: ProgressFn)
     ]
     flat_inv = [inv.positions[k] for inv, k in inv_positions]
 
-    proposals: list[MatchProposal] = propose_matches(offer_positions, flat_inv)
+    rows = {id(pos): AbgleichRow(offer_position=pos) for pos in offer_positions}
+
+    # Lump-sum billing (EK4_333, 2026-09-24): L&R's Schlussrechnung carried ONE line
+    # over the whole order — exactly Σ of all offer positions. Scored per position
+    # that reads as +20.700 € on one line and six FEHLT; it is neither. Such a line
+    # is spread pro rata over the mandatory positions and named as a lump sum.
+    mandatory = [pos for pos in offer_positions if not pos.optional and pos.line_total_net]
+    offer_sum = sum((pos.line_total_net for pos in mandatory), Decimal(0))
+    lump_targets = {t for t in (offer_sum, group.sonderpreis) if t}
+    lump_indices: set[int] = set()
+    for i, (inv, k) in enumerate(inv_positions):
+        amount = flat_inv[i].line_total_net
+        if amount and any(abs(amount - t) <= _LUMP_TOLERANCE for t in lump_targets) and mandatory:
+            lump_indices.add(i)
+            note = f"Gesamtangebot pauschal abgerechnet — eine Rechnungszeile über {format_de_decimal(amount)} €"
+            for pos in mandatory:
+                share = (pos.line_total_net * amount / offer_sum).quantize(Decimal("0.01"))
+                rows[id(pos)].matched.append(MatchedLine(
+                    invoice=inv, position_index=k, amount=share,
+                    confidence=Confidence.HIGH, source="lump", note=note))
+
+    proposals: list[MatchProposal] = [
+        p for p in propose_matches(offer_positions, flat_inv) if p.invoice_index not in lump_indices
+    ]
 
     # LLM augmentation for the leftovers (one call per vendor, only if needed).
     llm_notes: dict[int, tuple[int | None, str, float]] = {}
@@ -238,8 +332,6 @@ def _match_group(group: VendorGroup, *, with_llm: bool, on_progress: ProgressFn)
                     )
         except Exception as exc:  # noqa: BLE001 — augmentation must never kill the build
             on_progress(f"LLM-Abgleich übersprungen ({type(exc).__name__})")
-
-    rows = {id(pos): AbgleichRow(offer_position=pos) for pos in offer_positions}
 
     for proposal in proposals:
         inv, k = inv_positions[proposal.invoice_index]

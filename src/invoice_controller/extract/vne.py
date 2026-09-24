@@ -24,6 +24,7 @@ from invoice_controller.models import InvoiceDocument
 from invoice_controller.vne.abgleich import (
     SKIPPED_NO_POSITIONS,
     AbgleichResult,
+    blocks_from_kostenaufstellung_pdf,
     blocks_from_kostenaufstellung_xlsx,
     blocks_from_offer_documents,
     build_abgleich,
@@ -84,6 +85,9 @@ def build_vne_tabelle(
     elif ratio_source.startswith("xlsx:"):
         xlsx = project_dir / ratio_source.removeprefix("xlsx:")
         blocks, offer_source = blocks_from_kostenaufstellung_xlsx(xlsx), xlsx.name
+    elif ratio_source.startswith("pdf:"):
+        pdf = project_dir / ratio_source.removeprefix("pdf:")
+        blocks, offer_source = blocks_from_kostenaufstellung_pdf(pdf), pdf.name
     else:
         blocks, offer_source = [], ""
     if not blocks:

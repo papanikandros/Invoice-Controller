@@ -42,3 +42,6 @@ PLAN.md
 Literature/
 research/
 .playwright-mcp/
+
+# NiceGUI browser-storage dir created by local `serve` runs
+.nicegui/

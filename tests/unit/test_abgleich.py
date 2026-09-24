@@ -153,6 +153,31 @@ class TestAbgleich:
         assert blocks_from_offer_documents([statement]) == []
 
 
+class TestLumpSumBilling:
+    def test_one_line_over_the_offer_total_spreads_pro_rata(self) -> None:
+        """EK4_333 (2026-09-24): the Schlussrechnung billed the whole order as one line
+        equal to Σ offer — that is a lump sum, not one variance plus N FEHLT."""
+        offer = _offer("L&R Kältetechnik", [
+            _pos("1-9", "Kältemaschine, Tank, Pumpen", "135700.00"),
+            _pos("10", "Verrohrung und Montage", "2400.00"),
+            _pos("11", "Inbetriebnahme", "2100.00"),
+            _pos("12", "Fernwartung", "1500.00", optional=True),
+        ])
+        invoices = [
+            _invoice("L & R Kältetechnik GmbH & Co.KG", "SR-1",
+                     [_ipos("Auftrag 26-4132 Kälteanlage komplett", "140200.00")]),
+            _invoice("L & R Kältetechnik GmbH & Co.KG", "R-2", [_ipos("Transportkosten", "700.00")]),
+        ]
+        [group] = build_abgleich(blocks_from_offer_documents([offer]), invoices, with_llm=False).groups
+        by_pos = {r.offer_position.pos: r for r in group.rows}
+        assert all(by_pos[p].variance == 0 for p in ("1-9", "10", "11"))
+        assert all(m.source == "lump" and "pauschal" in m.note for m in by_pos["10"].matched)
+        assert not by_pos["12"].matched                     # optional stays untouched
+        assert (group.missing, group.drifted) == (0, 0)
+        assert [e.amount for e in group.extras] == [Decimal("700.00")]   # transport still extra
+        assert group.invoiced_total == Decimal("140900.00")
+
+
 class TestKostenaufstellungOfferSide:
     def test_positions_roundtrip_through_the_cost_estimation_xlsx(self, tmp_path: Path) -> None:
         """The zero-token offer side: what cost-estimation wrote (and the consultant
@@ -172,6 +197,45 @@ class TestKostenaufstellungOfferSide:
         assert {r.offer_position.pos: r.variance for r in group.rows if r.matched} == {
             "1": Decimal(0), "2": Decimal("200"),
         }
+
+
+class TestKostenaufstellungPdfOfferSide:
+    LAYOUT = (
+        "                Muster GmbH, Musterstadt - Vergleich Anlagen\n\n"
+        "                SOLL Musterlieferant Angebot A-77 vom 07.01.2026, Anlage\n"
+        "Position        Beschreibung                       Gesamtkosten   Investitionskosten   Nebenkosten\n"
+        "           Maschine, Tank, Pumpen und\n"
+        "  1-9      Steuerung mit Winterentlastung,       135.700,00 €     135.700,00 €      0,00 €\n"
+        "           Schaltschrank und Container\n"
+        "  10       Verrohrung und Montage                  2.400,00 €           0,00 €  2.400,00 €\n"
+        "Σ 1…10                       Gesamtpreis Pos. 1 – 10   138.100,00 €   135.700,00 €  2.400,00 €\n"
+        "  11       Filter (optional)                       3.600,00 €       3.600,00 €      0,00 €\n"
+        "Σ 1…11                       Gesamtpreis Pos. 1 – 11   141.700,00 €   139.300,00 €  2.400,00 €\n"
+        "                                                 100,00 %        98,31 %       1,69 %\n"
+        "                SOLL Kosteneinschätzungen von Kunden\n"
+        "Position        Beschreibung                       Gesamtkosten   Investitionskosten   Nebenkosten\n"
+        "   1       Tiefbau                                 8.000,00 €           0,00 €  8.000,00 €\n"
+        "Σ 1-1                        Gesamtpreis Pos. 1-1\n"
+        "                                                   8.000,00 €           0,00 €  8.000,00 €\n"
+        "                                                 100,00 %         0,00 %     100,00 %\n"
+        "                                     Kostenaufstellung\n\f"
+    )
+
+    def test_positions_with_wrapped_descriptions(self) -> None:
+        """EK4_333 (2026-09-24): the colleague uploads the consultant's Kostenaufstellung
+        PDF, so the ratios AND the offer positions come from it — zero tokens."""
+        from invoice_controller.vne.abgleich import blocks_from_layout_text
+
+        [block] = blocks_from_layout_text(self.LAYOUT)          # Schätzung block excluded
+        assert block.label == "Musterlieferant"
+        assert [(p.pos, p.line_total_net, p.optional) for p in block.positions] == [
+            ("1-9", Decimal("135700.00"), False),
+            ("10", Decimal("2400.00"), False),
+            ("11", Decimal("3600.00"), True),
+        ]
+        wrapped = block.positions[0].description
+        assert wrapped.startswith("Maschine, Tank") and wrapped.endswith("Schaltschrank und Container")
+        assert block.positions[1].description == "Verrohrung und Montage"
 
 
 class TestSecondSheet:
