@@ -43,20 +43,25 @@ The provider preference order is **OpenRouter → OpenAI → Gemini → Anthropi
 
 ## Web UI (`serve`)
 
-`invoice-controller serve [--host 0.0.0.0] [--port 8080]` starts the browser UI (German, styled to the
-EnergieKonzept-Krause brand — tokens in `web/theme.py`, font and logo vendored under `web/static/`):
-choose the funding program (EEW or BEG), pick the procedure tab, upload the documents, press start,
-download the result. Runs execute in the background
-with live per-file status; review flags and errors are shown loudly and logged to a per-run
-`audit.jsonl` (`tmp/webruns/`, last 20 runs kept). Set `IC_WEB_PASSWORD` in `.env` to enable the
-password gate — strongly recommended before exposing the port (e.g. `ngrok http --basic-auth "user:pw" 8080`).
+`invoice-controller serve [--host 0.0.0.0] [--port 8080]` starts the browser UI (German):
+select a program, pick a procedure, upload the documents, press start, download the result.
+Runs execute in the background with live per-file status; review flags and errors are shown
+loudly and logged to a per-run `audit.jsonl` (`tmp/webruns/`, last 20 runs kept).
+
+**Login.** `IC_WEB_PASSWORD` in `.env` is the gate: one password, no username, shown as a
+login page. On a **non-loopback bind it is required** — without it the UI refuses to serve
+rather than opening up. Bound to loopback only (the default) it stays open, which is what
+you want while developing. Failed logins are throttled per client address: five failures in
+five minutes lock that address out for fifteen minutes. Set `IC_WEB_STORAGE_SECRET` so
+sessions survive a restart.
 
 ## Server deployment (Docker, behind the shared Caddy)
 
-The compose stack runs only the web UI. TLS, the hostname and the outer basic-auth
-come from the server's shared Caddy stack (`~/Workspace/server-proxy`, deployed to
-`/opt/proxy`), which reaches the app over the docker network `proxy` as `invoice-app`.
-`IC_WEB_PASSWORD` stays the inner gate.
+The compose stack runs only the web UI. TLS and the hostname come from the server's shared
+Caddy stack (`~/Workspace/server-proxy`, deployed to `/opt/proxy`), which reaches the app
+over the docker network `proxy` as `invoice-app`. Access control is the app's own login
+page — the proxy's basic_auth was dropped on 2026-09-28 — so `IC_WEB_PASSWORD` must be set
+in `.env` or the UI stays locked.
 
 ```bash
 cp .env.example .env    # provider key + IC_WEB_PASSWORD + IC_WEB_STORAGE_SECRET

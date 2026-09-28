@@ -487,13 +487,15 @@ def serve(
 ) -> None:
     """Web UI — select procedure, upload documents, run, download results.
 
-    Optional password gate via IC_WEB_PASSWORD in .env (recommended before exposing
-    the port through ngrok; additionally use `ngrok http --basic-auth "user:pw" <port>`)."""
+    IC_WEB_PASSWORD in .env is the login gate. On a non-loopback bind it is REQUIRED:
+    without it the UI refuses to serve rather than opening up. Failed logins are
+    throttled per client address (web/gate.py)."""
     from invoice_controller.web.app import run_server
 
     console.print(f"[bold]Invoice-Controller Web-UI[/bold] → http://{host}:{port}")
     if not (host.startswith("127.") or host == "localhost") and not __import__("os").environ.get("IC_WEB_PASSWORD"):
-        console.print("[yellow]⚠ Nicht-lokale Bindung ohne IC_WEB_PASSWORD — Zugang ist ungeschützt.[/yellow]")
+        console.print("[yellow]⚠ Nicht-lokale Bindung ohne IC_WEB_PASSWORD — "
+                      "die Oberfläche bleibt gesperrt, bis das Passwort gesetzt ist.[/yellow]")
     run_server(host=host, port=port)
 
 

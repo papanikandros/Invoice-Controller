@@ -6,8 +6,9 @@ The program choice comes first (user decision 2026-09-24): `/` offers EEW and BE
 `/<program>` shows only that program's procedures as tabs. Every run is a background
 job (web/jobs.py) with a live job page; errors arrive pre-translated (web/errors.py),
 review flags render as warm parchment bands — visually distinct from errors.
-Optional password gate via IC_WEB_PASSWORD in .env; on the server Caddy's
-basic_auth is the outer layer.
+Password gate via IC_WEB_PASSWORD in .env. Since 2026-09-28 this login page is the ONLY
+gate on the server (Caddy's outer basic_auth was dropped), so it fails closed on a
+non-loopback bind without a password and throttles failed attempts (web/gate.py).
 """
 
 from __future__ import annotations
@@ -16,9 +17,9 @@ import os
 import secrets
 from pathlib import Path
 
-from nicegui import app, ui
+from nicegui import app, context, ui
 
-from invoice_controller.web import theme
+from invoice_controller.web import gate, theme
 from invoice_controller.web.jobs import Job, JobStore
 from invoice_controller.web.registry import (
     PROCEDURES,
@@ -33,11 +34,46 @@ from invoice_controller.web.registry import (
 STORE = JobStore(Path("tmp") / "webruns")
 
 
+# set by run_server(): True when the UI is bound to a non-loopback address, i.e. reachable
+# by someone other than the person who started it. Then a missing password is fatal, not open.
+_EXPOSED = False
+
+
+def _gate_shell(headline: str, *lines: tuple[str, str]) -> None:
+    """The login card's chrome (brand logo + headline) with arbitrary message lines."""
+    with ui.element("div").classes("absolute-center w-full max-w-sm px-6"):
+        ui.element("img").props('src="/ic-static/logo.png" alt="EnergieKonzept Krause GmbH"').classes("h-16 w-auto mx-auto mb-6 block")
+        ui.label("Invoice-Controller").classes("ic-headline text-center")
+        ui.label(headline).classes("ic-label text-center mb-2")
+        for text, cls in lines:
+            ui.label(text).classes(cls)
+
+
 def _guard() -> bool:
-    """Password gate — active only when IC_WEB_PASSWORD is set."""
+    """Single-password gate with per-address throttling.
+
+    True when the caller may see the page; otherwise renders the login card (or a
+    lockout / misconfiguration notice) and returns False."""
     password = os.environ.get("IC_WEB_PASSWORD", "")
-    if not password or app.storage.user.get("authed"):
+    if not password:
+        if not _EXPOSED:
+            return True          # loopback-only development: no gate
+        # reachable from outside with no password set — refuse instead of opening up
+        _gate_shell("Zugang gesperrt",
+                    ("IC_WEB_PASSWORD ist nicht gesetzt.", "text-negative text-center"),
+                    ("Bitte in der .env setzen und den Dienst neu starten.",
+                     "ic-label text-center"))
+        return False
+    if app.storage.user.get("authed"):
         return True
+
+    ip = gate.client_ip(getattr(context.client, "request", None))
+    left = gate.lock_seconds_left(ip)
+    if left:
+        _gate_shell("Zu viele Fehlversuche",
+                    (f"Erneut möglich in {left} Sekunden.", "text-negative text-center"))
+        return False
+
     with ui.element("div").classes("absolute-center w-full max-w-sm px-6"):
         ui.element("img").props('src="/ic-static/logo.png" alt="EnergieKonzept Krause GmbH"').classes("h-16 w-auto mx-auto mb-6 block")
         ui.label("Invoice-Controller").classes("ic-headline text-center")
@@ -45,11 +81,20 @@ def _guard() -> bool:
         pw = ui.input("Passwort", password=True, password_toggle_button=True).classes("w-full")
 
         def check() -> None:
+            if gate.lock_seconds_left(ip):
+                ui.navigate.reload()            # renders the lockout card
+                return
             if secrets.compare_digest(pw.value or "", password):
+                gate.clear(ip)
                 app.storage.user["authed"] = True
                 ui.navigate.reload()
-            else:
-                ui.notify("Falsches Passwort", type="negative")
+                return
+            if gate.record_failure(ip):
+                ui.navigate.reload()            # this failure triggered the lockout
+                return
+            ui.notify(f"Falsches Passwort — noch {gate.attempts_left(ip)} Versuch(e)",
+                      type="negative")
+            pw.set_value("")
 
         pw.on("keydown.enter", check)
         ui.button("Anmelden", icon="chevron_right", on_click=check).classes("ic-btn mt-4 w-full")
@@ -277,6 +322,8 @@ def job_page(job_id: str) -> None:
 
 
 def run_server(host: str = "127.0.0.1", port: int = 8080) -> None:
+    global _EXPOSED
+    _EXPOSED = not (host.startswith("127.") or host in ("localhost", "::1"))
     STORE.load_history()
     ui.run(
         host=host,
