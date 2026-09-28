@@ -274,8 +274,17 @@ class VneGeneration(Procedure):
                 job.add_flag(f"{name}: {'; '.join(row.flags)}")
             else:
                 job.file_status(name, "ok")
+        if result.ratio_path is not None:
+            job.file_status(result.ratio_path.name, "ok", "Kostenaufstellung — IK/NK-Anteile übernommen")
         for path in result.ignored:
-            job.file_status(path.name, "hinweis", "nicht Rechnung/Angebot — ignoriert")
+            if path.suffix.lower() in (".xlsx", ".ods"):
+                job.file_status(path.name, "hinweis",
+                                "nicht als Kostenaufstellung erkannt (Name muss 'Kostenaufstellung' enthalten, "
+                                "Blöcke mit SOLL-Kopfzeile) — ignoriert")
+            elif path.suffix.lower() not in (".pdf", ".png", ".jpg", ".jpeg"):
+                job.file_status(path.name, "hinweis", "kein PDF/Bild — ignoriert")
+            else:
+                job.file_status(path.name, "hinweis", "nicht Rechnung/Angebot — ignoriert")
 
         abgleich = result.abgleich
         if abgleich is not None and abgleich.skipped_reason:

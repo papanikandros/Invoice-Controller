@@ -178,6 +178,44 @@ class TestLumpSumBilling:
         assert group.invoiced_total == Decimal("140900.00")
 
 
+class TestRun4Findings:
+    """EK4_333 run 4 (2026-09-24): live-extracted offers + a Schlussrechnung with
+    'abzgl. Anzahlung' lines + the consultant's own offer in the upload."""
+
+    def _offer(self) -> OfferDocument:
+        return _offer("L&R Kältetechnik", [
+            _pos("1-9", "Kältemaschine", "135700.00"),
+            _pos("10", "Verrohrung", "2400.00"),
+            _pos("11", "Inbetriebnahme", "2100.00"),
+            _pos("12", "Vari-Kon", "2900.00", optional=True),       # accepted option, flagged optional by the LLM
+            _pos("13", "Dosierstation", "2250.00", optional=True),
+        ])
+
+    def test_deduction_lines_are_not_positions(self) -> None:
+        sr = _invoice("L & R Kältetechnik GmbH & Co.KG", "SR-1", [
+            _ipos("Auftrag 26-4132 Kälteanlage", "145350.00"),
+            _ipos("abzgl. Anzahlung RG0018118", "-78200.00"),
+            _ipos("abzgl. 2. Anzahlung RG0018849", "-62560.00"),
+        ], InvoiceType.SCHLUSSRECHNUNG)
+        [group] = build_abgleich(blocks_from_offer_documents([self._offer()]), [sr], with_llm=False).groups
+        # 145.350 = Σ incl. optionals → lump over all five priced positions, deductions ignored
+        assert (group.missing, group.drifted, len(group.extras)) == (0, 0, 0)
+        assert all(r.matched and r.matched[0].source == "lump" for r in group.rows)
+        assert group.invoiced_total == Decimal("145350.00")
+
+    def test_lump_over_mandatory_only_when_that_sum_matches(self) -> None:
+        sr = _invoice("L&R Kältetechnik", "SR-2", [_ipos("Kälteanlage komplett", "140200.00")])
+        [group] = build_abgleich(blocks_from_offer_documents([self._offer()]), [sr], with_llm=False).groups
+        by_pos = {r.offer_position.pos: r for r in group.rows}
+        assert all(by_pos[p].matched for p in ("1-9", "10", "11"))
+        assert not by_pos["12"].matched and not by_pos["13"].matched
+
+    def test_own_company_offer_is_not_an_abgleich_group(self) -> None:
+        own = _offer("EnergieKonzept Krause GmbH", [_pos("001", "Einsparkonzept", "7500.00")])
+        result = build_abgleich(blocks_from_offer_documents([self._offer(), own]), _lr_invoices(), with_llm=False)
+        assert [g.label for g in result.groups] == ["L&R Kältetechnik"]
+
+
 class TestKostenaufstellungOfferSide:
     def test_positions_roundtrip_through_the_cost_estimation_xlsx(self, tmp_path: Path) -> None:
         """The zero-token offer side: what cost-estimation wrote (and the consultant
@@ -197,6 +235,41 @@ class TestKostenaufstellungOfferSide:
         assert {r.offer_position.pos: r.variance for r in group.rows if r.matched} == {
             "1": Decimal(0), "2": Decimal("200"),
         }
+
+
+class TestKostenaufstellungOdsAndSubtotals:
+    def test_positions_roundtrip_through_the_legacy_ods(self, tmp_path: Path) -> None:
+        """EK4_333 run 4: the colleague uploaded the Kostenaufstellung as .ods (LibreOffice)."""
+        from invoice_controller.template.ods import write_kostenaufstellung as write_ods
+        from invoice_controller.vne.abgleich import blocks_from_kostenaufstellung_ods
+
+        path = tmp_path / "Kostenaufstellung, Test.ods"
+        write_ods([_lr_offer()], path)
+        [block] = blocks_from_kostenaufstellung_ods(path)
+        assert [(p.pos, p.line_total_net, p.optional) for p in block.positions] == [
+            ("1", Decimal("42300"), False), ("2", Decimal("3800"), False), ("3", Decimal("1500"), True),
+        ]
+
+    def test_subtotal_row_does_not_end_the_block(self, tmp_path: Path) -> None:
+        """The consultant's sheets carry a mid-block "Σ 1…11" subtotal before the
+        remaining positions — the reader stopped there (3 of 8 positions, 2026-09-29)."""
+        import openpyxl
+
+        wb = openpyxl.Workbook(); ws = wb.active
+        rows = [
+            ("SOLL Muster Angebot A-1 vom 01.01.2026", None, None, None, None),
+            ("Position", "Beschreibung", "Gesamtkosten", "Investitionskosten", "Nebenkosten"),
+            ("1", "Maschine", 1000, 1000, 0),
+            ("Σ 1…1", "Gesamtpreis Pos. 1 – 1", 1000, 1000, 0),
+            ("2", "Filter", 200, 200, 0),
+            ("Σ 1…2", "Gesamtpreis Pos. 1 – 2", 1200, 1200, 0),
+            (None, None, 1, 1, 0),
+        ]
+        for r in rows:
+            ws.append(r)
+        wb.save(tmp_path / "Kostenaufstellung.xlsx")
+        [block] = blocks_from_kostenaufstellung_xlsx(tmp_path / "Kostenaufstellung.xlsx")
+        assert [p.pos for p in block.positions] == ["1", "2"]
 
 
 class TestKostenaufstellungPdfOfferSide:
@@ -343,3 +416,16 @@ class TestOrchestratorWiring:
         [group] = abgleich.groups
         assert (group.drifted, len(group.extras)) == (1, 1)
         assert abgleich.offerless_invoices == []            # own-company invoice excluded, not "offerless"
+        assert result.ratio_path == tmp_path / "Kostenaufstellung.xlsx"
+
+    def test_unused_uploads_are_listed_not_dropped(self, tmp_path: Path, monkeypatch) -> None:
+        """EK4_333 run 4: a misnamed .ods vanished without a trace."""
+        from invoice_controller.extract import vne as orchestrator
+
+        (tmp_path / "Notizen.docx").write_bytes(b"x")
+        (tmp_path / "Kostenaufstellung, MKT.ods").write_bytes(b"not a real ods")
+        (tmp_path / ".~lock.x#").write_bytes(b"")
+        monkeypatch.setattr(orchestrator, "classify_folder", lambda _d: [])
+        result = orchestrator.build_vne_tabelle(tmp_path, ProjektConfig(), with_llm_match=False)
+        assert sorted(p.name for p in result.ignored) == ["Kostenaufstellung, MKT.ods", "Notizen.docx"]
+        assert result.ratio_source == "none" and result.ratio_path is None

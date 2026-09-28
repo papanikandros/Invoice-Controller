@@ -24,6 +24,7 @@ from invoice_controller.models import InvoiceDocument
 from invoice_controller.vne.abgleich import (
     SKIPPED_NO_POSITIONS,
     AbgleichResult,
+    blocks_from_kostenaufstellung_ods,
     blocks_from_kostenaufstellung_pdf,
     blocks_from_kostenaufstellung_xlsx,
     blocks_from_offer_documents,
@@ -53,6 +54,16 @@ def build_vne_tabelle(
     ]
 
     ratios, ratio_source = load_vendor_ratios(project_dir)
+    ratio_path = project_dir / ratio_source.split(":", 1)[1] if ":" in ratio_source else None
+    # Uploads that are neither classified (PDF/image) nor the Kostenaufstellung in use
+    # — e.g. a misnamed .ods — are listed, never silently dropped (EK4_333 run 4).
+    classified_paths = {c.path for c in classified}
+    ignored += sorted(
+        p for p in project_dir.rglob("*")
+        if p.is_file() and p not in classified_paths and p != ratio_path
+        and not p.name.startswith((".", "~")) and ".~lock" not in p.name
+        and p.name != "projekt.yaml"
+    )
     offers: list = []
     if not ratios and offers_cls:
         # No existing Kostenaufstellung — run cost-estimation extraction on the offers (LLM calls).
@@ -77,17 +88,18 @@ def build_vne_tabelle(
     result = compute_vne(
         invoices, ratios, config, ignored=ignored, ratio_source=ratio_source
     )
+    result.ratio_path = ratio_path
 
     # Positionsabgleich: reuses what this run already has — no second extraction.
     # The offer side follows the ratio source, so both rest on the same document.
     if offers:
         blocks, offer_source = blocks_from_offer_documents(offers), "Live-Extraktion der Angebote"
-    elif ratio_source.startswith("xlsx:"):
-        xlsx = project_dir / ratio_source.removeprefix("xlsx:")
-        blocks, offer_source = blocks_from_kostenaufstellung_xlsx(xlsx), xlsx.name
-    elif ratio_source.startswith("pdf:"):
-        pdf = project_dir / ratio_source.removeprefix("pdf:")
-        blocks, offer_source = blocks_from_kostenaufstellung_pdf(pdf), pdf.name
+    elif ratio_source.startswith("xlsx:") and ratio_path is not None:
+        blocks, offer_source = blocks_from_kostenaufstellung_xlsx(ratio_path), ratio_path.name
+    elif ratio_source.startswith("ods:") and ratio_path is not None:
+        blocks, offer_source = blocks_from_kostenaufstellung_ods(ratio_path), ratio_path.name
+    elif ratio_source.startswith("pdf:") and ratio_path is not None:
+        blocks, offer_source = blocks_from_kostenaufstellung_pdf(ratio_path), ratio_path.name
     else:
         blocks, offer_source = [], ""
     if not blocks:

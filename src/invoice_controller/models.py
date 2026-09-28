@@ -266,6 +266,9 @@ class InvoiceDocument(BaseModel):
     # possible — no client configured, or vision path).
     masked: bool = False
     recipient_local_ok: bool | None = None
+    # The letterhead was an image and the LLM took the recipient for the vendor; the
+    # vendor was taken from the colleague's filename instead (flagged, 2026-09-29).
+    vendor_from_filename: bool = False
     amount_check: AmountCheck
     extraction_method: str = "pdfplumber+llm"
 

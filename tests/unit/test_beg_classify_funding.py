@@ -93,6 +93,14 @@ def test_invoice_citing_its_auftragsbestaetigung_is_an_invoice() -> None:
     assert only.doc_class is DocClass.OTHER
 
 
+def test_fachunternehmererklaerung_scan_is_other_by_filename() -> None:
+    """EK4_333 run 4 (2026-09-24): a scanned FUE has no text layer and defaulted to
+    'invoice', producing a garbage row; the colleague's filename says what it is."""
+    got = classify_pdf(Path("FUE-L&R-EEW-SWG-720002505-MKT.pdf"), first_page_text="")
+    assert got.doc_class is DocClass.OTHER
+    assert classify_pdf(Path("Fachunternehmererklaerung Heizung.pdf"), first_page_text="").doc_class is DocClass.OTHER
+
+
 def test_classify_image_payment_proof_by_name_or_folder() -> None:
     got = classify_image(Path("Zahlungsnachweise/3eb9419c.jpeg"))
     assert got.doc_class is DocClass.ZAHLUNGSNACHWEIS

@@ -36,7 +36,7 @@ from invoice_controller.match.positions import (
     MatchProposal,
     propose_matches,
 )
-from invoice_controller.match.vendor import _overlap_score, normalize_vendor
+from invoice_controller.match.vendor import _overlap_score, is_own_company, normalize_vendor
 from invoice_controller.models import DocumentKind, InvoiceDocument, OfferDocument, Position
 from invoice_controller.normalize import format_de_decimal
 from invoice_controller.vne.ratios import _BLOCK_HEADER, _STATEMENT_BLOCK_RE, vendor_from_header
@@ -45,10 +45,16 @@ ProgressFn = Callable[[str], None]
 
 _LLM_CONFIDENCE_FLOOR = 0.55   # an LLM pair below this stays unmatched
 _LUMP_TOLERANCE = Decimal("0.02")
+# A Schlussrechnung's "abzgl. Anzahlung …" lines restate money already matched through the
+# folded advances — as negative positions they polluted the Abgleich (EK4_333 run 4).
+_DEDUCTION_RE = re.compile(
+    r"anzahlung|abschlag|akonto|abzgl|abz\.|bereits\s+(berechnet|gezahlt|in\s+rechnung)|teilrechnung",
+    re.IGNORECASE,
+)
 
 SKIPPED_NO_POSITIONS = (
     "Positionsabgleich übersprungen — keine Angebotspositionen lesbar (Kostenaufstellung als "
-    ".xlsx oder PDF hochladen, oder die Angebots-PDFs ohne Kostenaufstellung)"
+    ".xlsx/.ods/PDF hochladen, oder die Angebots-PDFs ohne Kostenaufstellung)"
 )
 
 _MONEY_EUR = re.compile(r"(-?\d{1,3}(?:\.\d{3})*,\d{2})\s*€")
@@ -189,8 +195,7 @@ def blocks_from_kostenaufstellung_xlsx(path: Path) -> list[OfferBlock]:
         if current is None:
             continue
         if first.startswith("Σ"):
-            in_positions = False
-            continue
+            continue          # a subtotal ("Σ 1…11") sits mid-block; positions continue below it
         if isinstance(b, str) and b.startswith("Sonderpreis"):
             current.sonderpreis = _dec(row[2].value)
             continue
@@ -202,6 +207,49 @@ def blocks_from_kostenaufstellung_xlsx(path: Path) -> list[OfferBlock]:
         if total is None and not optional:
             continue
         current.positions.append(Position(pos=first, description=b, line_total_net=total, optional=optional))
+    return [blk for blk in blocks if blk.positions]
+
+
+def blocks_from_kostenaufstellung_ods(path: Path) -> list[OfferBlock]:
+    """The legacy `.ods` cost-estimation output (or a consultant copy of it) — the
+    colleagues work in LibreOffice, so this is what they upload (EK4_333 run 4)."""
+    import zipfile
+    from xml.etree import ElementTree as ET
+
+    from invoice_controller.vne.ratios import _NS_T, _cell_texts_and_values
+
+    with zipfile.ZipFile(path) as z:
+        root = ET.fromstring(z.read("content.xml"))
+    tables = list(root.iter(_NS_T + "table"))
+    blocks: list[OfferBlock] = []
+    current: OfferBlock | None = None
+    in_positions = False
+    for table in tables[:1]:
+        for row_elem in table.iter(_NS_T + "table-row"):
+            texts, values = _cell_texts_and_values(row_elem)
+            first = texts[0].strip() if texts else ""
+            if first.startswith("SOLL"):
+                current, in_positions = None, False
+                if not _STATEMENT_BLOCK_RE.search(first):
+                    current = OfferBlock(label=vendor_from_header(first), positions=[])
+                    blocks.append(current)
+                    in_positions = True
+                continue
+            if current is None:
+                continue
+            if first.startswith("Σ"):
+                continue      # subtotal rows sit mid-block; positions continue below
+            desc = texts[1].strip() if len(texts) > 1 else ""
+            if desc.startswith("Sonderpreis"):
+                current.sonderpreis = values[2] if len(values) > 2 else None
+                continue
+            if not in_positions or not first or first == "Position" or not desc:
+                continue
+            total = values[2] if len(values) > 2 else None
+            optional = "option" in desc.lower()
+            if total is None and not optional:
+                continue
+            current.positions.append(Position(pos=first, description=desc, line_total_net=total, optional=optional))
     return [blk for blk in blocks if blk.positions]
 
 
@@ -286,6 +334,10 @@ def _match_group(group: VendorGroup, *, with_llm: bool, on_progress: ProgressFn)
     invoices, _folded = _fold_advances(group.invoices)
     inv_positions: list[tuple[InvoiceDocument, int]] = [
         (inv, k) for inv in invoices for k in range(len(inv.positions))
+        if not (
+            inv.positions[k].line_total_net is not None and inv.positions[k].line_total_net < 0
+            and _DEDUCTION_RE.search(inv.positions[k].description)
+        )
     ]
     flat_inv = [inv.positions[k] for inv, k in inv_positions]
 
@@ -294,21 +346,34 @@ def _match_group(group: VendorGroup, *, with_llm: bool, on_progress: ProgressFn)
     # Lump-sum billing (EK4_333, 2026-09-24): L&R's Schlussrechnung carried ONE line
     # over the whole order — exactly Σ of all offer positions. Scored per position
     # that reads as +20.700 € on one line and six FEHLT; it is neither. Such a line
-    # is spread pro rata over the mandatory positions and named as a lump sum.
+    # is spread pro rata over the positions it covers and named as a lump sum. The
+    # covered set is the mandatory positions, or ALL priced ones when the line equals
+    # Σ incl. optionals (live extraction flags accepted options as optional).
     mandatory = [pos for pos in offer_positions if not pos.optional and pos.line_total_net]
-    offer_sum = sum((pos.line_total_net for pos in mandatory), Decimal(0))
-    lump_targets = {t for t in (offer_sum, group.sonderpreis) if t}
+    all_priced = [pos for pos in offer_positions if pos.line_total_net]
+    sum_mandatory = sum((pos.line_total_net for pos in mandatory), Decimal(0))
+    sum_all = sum((pos.line_total_net for pos in all_priced), Decimal(0))
+    lump_sets: list[tuple[Decimal, list[Position]]] = [
+        (t, covered) for t, covered in (
+            (sum_mandatory, mandatory), (sum_all, all_priced), (group.sonderpreis, mandatory)
+        ) if t and covered
+    ]
     lump_indices: set[int] = set()
     for i, (inv, k) in enumerate(inv_positions):
         amount = flat_inv[i].line_total_net
-        if amount and any(abs(amount - t) <= _LUMP_TOLERANCE for t in lump_targets) and mandatory:
-            lump_indices.add(i)
-            note = f"Gesamtangebot pauschal abgerechnet — eine Rechnungszeile über {format_de_decimal(amount)} €"
-            for pos in mandatory:
-                share = (pos.line_total_net * amount / offer_sum).quantize(Decimal("0.01"))
-                rows[id(pos)].matched.append(MatchedLine(
-                    invoice=inv, position_index=k, amount=share,
-                    confidence=Confidence.HIGH, source="lump", note=note))
+        if not amount:
+            continue
+        hit = next(((t, covered) for t, covered in lump_sets if abs(amount - t) <= _LUMP_TOLERANCE), None)
+        if hit is None:
+            continue
+        target_sum, covered = hit
+        lump_indices.add(i)
+        note = f"Gesamtangebot pauschal abgerechnet — eine Rechnungszeile über {format_de_decimal(amount)} €"
+        for pos in covered:
+            share = (pos.line_total_net * amount / target_sum).quantize(Decimal("0.01"))
+            rows[id(pos)].matched.append(MatchedLine(
+                invoice=inv, position_index=k, amount=share,
+                confidence=Confidence.HIGH, source="lump", note=note))
 
     proposals: list[MatchProposal] = [
         p for p in propose_matches(offer_positions, flat_inv) if p.invoice_index not in lump_indices
@@ -375,6 +440,8 @@ def build_abgleich(
     # Per-vendor grouping (PLAN: never match across vendors by default).
     groups: list[VendorGroup] = []
     for block in blocks:
+        if is_own_company(block.label):
+            continue          # the consultant's own offer: its invoices are the EK line, not scope
         key = _vendor_key(block.label)
         existing = next((g for g in groups if _overlap_score(_vendor_key(g.label), key) > 0), None)
         if existing is None:

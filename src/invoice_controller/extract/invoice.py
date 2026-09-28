@@ -8,6 +8,7 @@ cross-sum: it never blocks, it flags.
 
 from __future__ import annotations
 
+import re
 from decimal import Decimal
 from pathlib import Path
 
@@ -22,6 +23,7 @@ from invoice_controller.llm.extract_invoice import (
     extract_invoice_llm,
     extract_invoice_llm_vision,
 )
+from invoice_controller.match.vendor import normalize_vendor
 from invoice_controller.models import AmountCheck, InvoiceDocument, InvoiceType, VatStatus
 from invoice_controller.normalize import normalize_text
 from invoice_controller.pdf.ocr import (
@@ -105,6 +107,45 @@ def _strip_masked_recipient(extracted: ExtractedInvoice) -> None:
         value = getattr(extracted, field)
         if value and "[KUNDE" in value.upper():
             setattr(extracted, field, None)
+
+
+# Filename tokens that are invoice-type markers, not vendor words (colleagues' naming:
+# "L&R-Kältetechnik-Sr-RG0018867-21.07.2026.pdf", "EnergieKonzept-Krause-1.Ar-RE-…").
+_FILENAME_TYPE_TOKENS = {"ar", "sr", "tr", "az", "rg", "re", "rechnung", "rechn", "nr", "invoice"}
+
+
+def vendor_from_filename(path: Path) -> str | None:
+    """Leading words of the filename up to the first token carrying a digit or an
+    invoice-type marker — the vendor as the colleague named the file."""
+    words: list[str] = []
+    for token in re.split(r"[-_]+", path.stem.strip()):
+        token = token.strip(" .")
+        if not token or any(ch.isdigit() for ch in token) or token.lower().rstrip(".") in _FILENAME_TYPE_TOKENS:
+            break
+        words.append(token)
+    name = " ".join(words)
+    return name if sum(ch.isalpha() for ch in name) >= 3 else None
+
+
+def _vendor_is_recipient(vendor: str, recipient: str | None, client: str | None) -> bool:
+    """True when the extracted 'vendor' shares distinctive tokens with the invoice's
+    recipient or the configured client — the image-letterhead failure (Kempmann →
+    'MKT GmbH', EK4_333)."""
+    v = normalize_vendor(vendor)
+    for other in (recipient, client):
+        if other and v & normalize_vendor(other):
+            return True
+    return False
+
+
+def _apply_filename_vendor(extracted, path: Path, mask: tuple[str, str | None] | None) -> bool:
+    if not _vendor_is_recipient(extracted.vendor_name, extracted.recipient_name, mask[0] if mask else None):
+        return False
+    hint = vendor_from_filename(path)
+    if hint is None or _vendor_is_recipient(hint, extracted.recipient_name, mask[0] if mask else None):
+        return False
+    extracted.vendor_name = hint
+    return True
 
 
 def extract_invoice(
@@ -205,6 +246,10 @@ def extract_invoice(
     if xml_note:
         amount_check.message = "; ".join(m for m in (xml_note, amount_check.message) if m)
 
+    # The recipient check must run BEFORE masking strips the recipient (above), so the
+    # comparison here uses the configured client name on masked runs.
+    vendor_from_file = _apply_filename_vendor(extracted, path, mask)
+
     return InvoiceDocument(
         source_path=path,
         amount_check=amount_check,
@@ -212,6 +257,7 @@ def extract_invoice(
         grounding_check=grounding_check,
         masked=masked,
         recipient_local_ok=recipient_local_ok,
+        vendor_from_filename=vendor_from_file,
         extraction_method=method,
         **extracted.model_dump(),
     )

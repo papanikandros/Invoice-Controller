@@ -27,7 +27,7 @@ from decimal import Decimal
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
-from invoice_controller.models import Kostenkategorie, OfferDocument
+from invoice_controller.models import DocumentKind, Kostenkategorie, OfferDocument
 
 _NS_T = "{urn:oasis:names:tc:opendocument:xmlns:table:1.0}"
 _NS_P = "{urn:oasis:names:tc:opendocument:xmlns:text:1.0}"
@@ -66,6 +66,9 @@ class VendorRatio:
     gesamt: Decimal | None           # cost-estimation block Σ — for per-vendor reconciliation
     sonderpreis: Decimal | None
     source: str                      # "ods" | "pdf" | "live-extraction"
+    # Live extraction knows the document kind; a scanned Kosteneinschätzung's header is
+    # its client's name, so the header regex alone missed it (EK4_333 run 4, 2026-09-24).
+    statement: bool = False
 
 
 def _renormalize(ik: Decimal, nk: Decimal) -> tuple[Decimal, Decimal]:
@@ -394,6 +397,7 @@ def from_offer_documents(offers: list[OfferDocument]) -> list[VendorRatio]:
                 gesamt=gesamt,
                 sonderpreis=offer.totals.sonderpreis,
                 source="live-extraction",
+                statement=offer.kind is DocumentKind.STATEMENT,
             )
         )
     return ratios
@@ -407,7 +411,22 @@ def is_statement_block(ratio: VendorRatio) -> bool:
     existed at application time — it has no vendor name to match invoices against,
     but its ratio (typically 100 % NK) is the offer-side split for exactly the
     invoices that later arrive without an offer."""
-    return bool(_STATEMENT_BLOCK_RE.search(ratio.header))
+    return ratio.statement or bool(_STATEMENT_BLOCK_RE.search(ratio.header))
+
+
+def find_kostenaufstellung_sheet(project_dir: Path) -> Path | None:
+    """The consultant's `.xlsx`/`.ods` Kostenaufstellung by name PATTERN: colleagues
+    upload "Kostenaufstellung, MKT.ods" (EK4_333 run 4, 2026-09-24), which the exact
+    name lookup silently skipped. The exact name still wins when several match."""
+    candidates = [
+        p for p in project_dir.iterdir()
+        if p.is_file() and p.suffix.lower() in (".xlsx", ".ods")
+        and "kostenaufstellung" in p.name.lower()
+        and not p.name.startswith((".", "~"))
+    ]
+    candidates.sort(key=lambda p: (p.name.lower() not in ("kostenaufstellung.xlsx", "kostenaufstellung.ods"),
+                                   p.suffix.lower() != ".xlsx", p.name.lower()))
+    return candidates[0] if candidates else None
 
 
 def find_kostenaufstellung_pdf(project_dir: Path) -> Path | None:
@@ -430,16 +449,15 @@ def load_vendor_ratios(project_dir: Path) -> tuple[list[VendorRatio], str]:
     (.xlsx/.ods) nor an cost-estimation-format PDF exists — the caller then runs live cost-estimation
     extraction or red-flags everything. The .xlsx (current cost-estimation output format) is
     preferred; the .ods tier remains for projects generated before 2026-08-28."""
-    xlsx = project_dir / "Kostenaufstellung.xlsx"
-    if xlsx.exists():
-        ratios = from_kostenaufstellung_xlsx(xlsx)
+    sheet = find_kostenaufstellung_sheet(project_dir)
+    if sheet is not None:
+        reader = from_kostenaufstellung_xlsx if sheet.suffix.lower() == ".xlsx" else from_kostenaufstellung_ods
+        try:
+            ratios = reader(sheet)
+        except Exception:  # noqa: BLE001 — an unreadable sheet falls through to the next tier
+            ratios = []
         if ratios:
-            return ratios, f"xlsx:{xlsx.name}"
-    ods = project_dir / "Kostenaufstellung.ods"
-    if ods.exists():
-        ratios = from_kostenaufstellung_ods(ods)
-        if ratios:
-            return ratios, f"ods:{ods.name}"
+            return ratios, f"{sheet.suffix.lower()[1:]}:{sheet.name}"
     pdf = find_kostenaufstellung_pdf(project_dir)
     if pdf is not None:
         ratios = from_kostenaufstellung_pdf(pdf)

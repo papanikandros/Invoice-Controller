@@ -85,6 +85,7 @@ class VneResult:
     invoices: list[VneRow]
     ignored: list[Path]             # `other`-classified documents, reported by name
     ratio_source: str
+    ratio_path: Path | None = None  # the Kostenaufstellung file the Anteile came from
     vendor_summaries: list[VendorSummary] = field(default_factory=list)
     beantragt_ik: Decimal | None = None
     beantragt_nk: Decimal | None = None
@@ -179,6 +180,11 @@ def compute_vne(
             # authoritative for the split, but the row must say the line items
             # don't reconcile — like a failed offer cross-sum, loud not blocking.
             flags.append(f"Positions-Kreuzsumme: {inv.position_check.message}")
+        if inv.vendor_from_filename:
+            flags.append(
+                f"Rechnungssteller '{inv.vendor_name}' aus dem Dateinamen übernommen "
+                "(Briefkopf nicht lesbar) — prüfen"
+            )
         if not own and ratio is None:
             # No vendor block — but a single SCHÄTZUNG block covers exactly the
             # invoices that never had an offer: apply its ratio, red-flagged for

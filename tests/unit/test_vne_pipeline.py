@@ -114,6 +114,90 @@ def test_vendor_match_requires_token_overlap() -> None:
     assert match_vendor("Hofmann Kran-Vermietung", [_ratio("MAFAC"), _ratio("Eggersmann")]) is None
 
 
+def test_kostenaufstellung_sheet_found_by_name_pattern(tmp_path: Path) -> None:
+    """EK4_333 run 4: "Kostenaufstellung, MKT.ods" was silently ignored by the exact-name
+    lookup and the run fell back to live extraction."""
+    from datetime import date
+
+    from invoice_controller.models import (
+        CrossSumCheck,
+        DocumentKind,
+        OfferDocument,
+        OfferHeader,
+        OfferTotals,
+        Position,
+    )
+    from invoice_controller.template.xlsx import write_kostenaufstellung
+    from invoice_controller.vne.ratios import find_kostenaufstellung_sheet, load_vendor_ratios
+
+    offer = OfferDocument(
+        source_path=Path("a.pdf"),
+        header=OfferHeader(vendor_name="Muster Kälte GmbH", offer_number="A-1", offer_date=date(2026, 1, 1)),
+        positions=[Position(pos="1", description="Maschine", line_total_net=Decimal("1000"))],
+        totals=OfferTotals(nettosumme=Decimal("1000")),
+        cross_sum=CrossSumCheck(expected=Decimal("1000"), actual=Decimal("1000"), tolerance=Decimal("0.02"), passed=True),
+        kind=DocumentKind.OFFER,
+    )
+    write_kostenaufstellung([offer], tmp_path / "Kostenaufstellung, MKT.xlsx")
+    (tmp_path / ".~lock.Kostenaufstellung, MKT.xlsx#").write_text("")     # LibreOffice lock file
+    assert find_kostenaufstellung_sheet(tmp_path) == tmp_path / "Kostenaufstellung, MKT.xlsx"
+    ratios, source = load_vendor_ratios(tmp_path)
+    assert source == "xlsx:Kostenaufstellung, MKT.xlsx" and [r.vendor for r in ratios]
+
+
+def test_live_extracted_statement_is_a_statement_block() -> None:
+    """EK4_333 run 4: the scanned Kosteneinschätzung's live ratio carried the client's
+    name as header, so offer-less invoices got NO split instead of 'lt. Schätzung'."""
+    from datetime import date
+
+    from invoice_controller.models import (
+        CrossSumCheck,
+        DocumentKind,
+        Kostenkategorie,
+        OfferDocument,
+        OfferHeader,
+        OfferTotals,
+        Position,
+    )
+    from invoice_controller.vne.ratios import from_offer_documents, is_statement_block
+
+    statement = OfferDocument(
+        source_path=Path("8. Kosteneinschätzung MKT.pdf"),
+        header=OfferHeader(vendor_name="MKT Mannel Kunststofftechnik", offer_number="Stellungnahme", offer_date=date(2026, 1, 20)),
+        positions=[Position(pos="1", description="Tiefbau", line_total_net=Decimal("8000"),
+                            kategorie=Kostenkategorie.NEBENKOSTEN)],
+        totals=OfferTotals(nettosumme=None),
+        cross_sum=CrossSumCheck(expected=None, actual=Decimal("8000"), tolerance=Decimal("0.02"), passed=True, not_applicable=True),
+        kind=DocumentKind.STATEMENT,
+    )
+    [ratio] = from_offer_documents([statement])
+    assert is_statement_block(ratio) and ratio.anteil_nk == 1
+
+
+def test_vendor_from_filename_replaces_recipient_as_vendor() -> None:
+    """EK4_333: Kempmann's letterhead is an image, the LLM returned the recipient
+    'MKT GmbH' as vendor; the colleague's filename names the real vendor."""
+    from invoice_controller.extract.invoice import _apply_filename_vendor, vendor_from_filename
+
+    assert vendor_from_filename(Path("Franz-Kempmann-Transport-07-058-23.07.2026.pdf")) == "Franz Kempmann Transport"
+    assert vendor_from_filename(Path("L&R-Kältetechnik-Sr-RG0018867-21.07.2026.pdf")) == "L&R Kältetechnik"
+    assert vendor_from_filename(Path("EnergieKonzept-Krause-1.Ar-RE-26_1964-27.03.2026.pdf")) == "EnergieKonzept Krause"
+    assert vendor_from_filename(Path("RG0018118.pdf")) is None
+
+    class Ex:  # the extracted fields the rule touches
+        vendor_name = "MKT GmbH"
+        recipient_name = "c.schulte@mannel-systeme.com"
+    ex = Ex()
+    assert _apply_filename_vendor(ex, Path("Franz-Kempmann-Transport-07-058-23.07.2026.pdf"),
+                                  ("MKT - Mannel Kunststofftechnik GmbH", None)) is True
+    assert ex.vendor_name == "Franz Kempmann Transport"
+    ok = Ex()
+    ok.vendor_name = "Gräfe Sanitär GmbH"
+    ok.recipient_name = "MKT Mannel Kunststofftechnik GmbH"
+    assert _apply_filename_vendor(ok, Path("Gräfe-Sanitär-R2608020-20.08.2026.pdf"), None) is False
+    assert ok.vendor_name == "Gräfe Sanitär GmbH"                      # a real vendor is never overwritten
+
+
 def test_shared_legal_form_is_no_vendor_match() -> None:
     """EK4_333 (2026-09-23): Gräfe's invoice was routed to the L&R block (97 % IK)
     because "GmbH & Co" tokenised to a shared "gmbh"."""

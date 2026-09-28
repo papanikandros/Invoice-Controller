@@ -75,7 +75,8 @@ _OTHER_NAME_RE = re.compile(
     r"|best[äa]tigung"  # order/completion confirmations ("Bestätigung AN-…", "… nach Durchführung")
     r"|verwendungsnachweis|vdz|jaz|heizlast|stundenzettel|kaufbeleg"
     r"|bestätigung\s+nach\s+durchführung"
-    r"|^eewvn_|^qstvn_|^begptvn|^tpn\d*_",  # BAFA/KfW Verwendungsnachweis-side forms
+    r"|^eewvn_|^qstvn_|^begptvn|^tpn\d*_"   # BAFA/KfW Verwendungsnachweis-side forms
+    r"|^fue[\s_.-]|fachunternehmer",          # Fachunternehmererklärung scans (EK4_333 run 4)
     re.IGNORECASE,
 )
 _INVOICE_NAME_RE = re.compile(
