@@ -113,6 +113,28 @@ def _openrouter_key() -> str | None:
     return os.environ.get("OPEN_ROUTER_API_KEY") or os.environ.get("OPENROUTER_API_KEY")
 
 
+def _openrouter_provider_config(env: dict[str, str] | None = None) -> dict:
+    """OpenRouter routing restrictions from the environment (A3, 2026-09-29).
+
+    The broker forwards every payload to one of several hosts of the model, each with
+    its own retention/training policy — and the account default allows hosts that may
+    keep prompts. `data_collection` defaults to "deny" here so client documents only
+    reach hosts that do not store them; OpenRouter answers 404 instead of falling back
+    when no compliant host serves the model, which the retry layer surfaces as
+    'llm-unavailable'. Set OPENROUTER_DATA_COLLECTION=allow to lift it, OPENROUTER_ZDR=1
+    for zero-data-retention endpoints only, OPENROUTER_PROVIDERS=google-vertex,google-ai-studio
+    to pin the hosts."""
+    env = os.environ if env is None else env
+    cfg: dict = {"data_collection": "deny" if env.get("OPENROUTER_DATA_COLLECTION", "deny").lower() != "allow" else "allow"}
+    if env.get("OPENROUTER_ZDR", "").lower() in ("1", "true", "yes"):
+        cfg["zdr"] = True
+    if providers := [p.strip() for p in env.get("OPENROUTER_PROVIDERS", "").split(",") if p.strip()]:
+        cfg["only"] = providers
+    if env.get("OPENROUTER_ALLOW_FALLBACKS", "").lower() in ("0", "false", "no"):
+        cfg["allow_fallbacks"] = False
+    return cfg
+
+
 def _resolve_model() -> str | Model:
     """Pick a provider+model. Preference: OpenRouter → OpenAI → Gemini → Anthropic.
 
@@ -123,11 +145,16 @@ def _resolve_model() -> str | Model:
     if explicit:
         return explicit
     if or_key := _openrouter_key():
-        from pydantic_ai.models.openai import OpenAIChatModel
+        from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
         from pydantic_ai.providers.openrouter import OpenRouterProvider
 
-        model_name = os.environ.get("OPENROUTER_MODEL", "nvidia/nemotron-3-ultra-550b-a55b:free")
-        return OpenAIChatModel(model_name, provider=OpenRouterProvider(api_key=or_key))
+        model_name = os.environ.get("OPENROUTER_MODEL", "google/gemini-2.5-flash")
+        return OpenRouterModel(
+            model_name,
+            provider=OpenRouterProvider(api_key=or_key),
+            # model-level defaults; the agents' DETERMINISTIC_SETTINGS merge on top
+            settings=OpenRouterModelSettings(openrouter_provider=_openrouter_provider_config()),
+        )
     if os.environ.get("OPENAI_API_KEY"):
         return f"openai-chat:{os.environ.get('OPENAI_MODEL', 'gpt-5-mini')}"
     if os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"):

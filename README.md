@@ -46,7 +46,7 @@ The provider preference order is **OpenRouter → OpenAI → Gemini → Anthropi
 `invoice-controller serve [--host 0.0.0.0] [--port 8080]` starts the browser UI (German):
 select a program, pick a procedure, upload the documents, press start, download the result.
 Runs execute in the background with live per-file status; review flags and errors are shown
-loudly and logged to a per-run `audit.jsonl` (`tmp/webruns/`, last 20 runs kept).
+loudly and logged to a per-run `audit.jsonl` (`tmp/webruns/`, last 100 runs kept).
 
 **Login.** `IC_WEB_PASSWORD` in `.env` is the gate: one password, no username, shown as a
 login page. On a **non-loopback bind it is required** — without it the UI refuses to serve
@@ -73,7 +73,7 @@ Public host: `https://invoice.bestdomaininthesolarsystem.com` (set as `INVOICE_H
 `git pull --ff-only && docker compose up -d --build` in the server checkout.
 
 The app port is never published on the host — Caddy is the only entrance. Run history
-persists in the `webruns` volume (last 20 runs; on a shared box, mind that it holds
+persists in the `webruns` volume (last 100 runs; on a shared box, mind that it holds
 client documents). The image bundles tesseract+deu and poppler; the LLM key comes from
 `.env` at runtime and is never baked into the image.
 

@@ -28,7 +28,10 @@ from typing import Any, Callable
 
 from invoice_controller.web.errors import UserError, describe_error
 
-RETAIN_RUNS = 20
+# 100 since 2026-09-29 (user decision): the current box is a TEST server used to debug
+# the pipeline with real runs; run history is the debugging material. Revisit before the
+# move to the company server / public login portal.
+RETAIN_RUNS = 100
 
 
 @dataclass
@@ -166,7 +169,7 @@ class JobStore:
         job._task = asyncio.get_event_loop().create_task(_run())
 
     def _prune(self) -> None:
-        """Keep the newest RETAIN_RUNS run directories (user decision 2026-09-01)."""
+        """Keep the newest RETAIN_RUNS run directories (20 on 2026-09-01, 100 on 2026-09-29)."""
         dirs = sorted((d for d in self.base_dir.iterdir() if d.is_dir()), key=lambda d: d.name)
         for stale in dirs[:-RETAIN_RUNS]:
             active = self.jobs.get(stale.name)

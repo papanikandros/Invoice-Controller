@@ -221,3 +221,20 @@ class TestProgramRegistry:
             assert program_by_key(prog.key) is prog
             assert all(p.key.startswith(prog.key + "-") for p in procedures_for(prog))
         assert program_by_key("laeufe") is None          # the history route must not be a program
+
+
+class TestOpenRouterDataPolicy:
+    def test_default_denies_data_collection(self) -> None:
+        from invoice_controller.llm.extract import _openrouter_provider_config
+
+        assert _openrouter_provider_config({}) == {"data_collection": "deny"}
+
+    def test_env_overrides(self) -> None:
+        from invoice_controller.llm.extract import _openrouter_provider_config
+
+        cfg = _openrouter_provider_config({
+            "OPENROUTER_DATA_COLLECTION": "allow", "OPENROUTER_ZDR": "1",
+            "OPENROUTER_PROVIDERS": "google-vertex, google-ai-studio", "OPENROUTER_ALLOW_FALLBACKS": "0",
+        })
+        assert cfg == {"data_collection": "allow", "zdr": True,
+                       "only": ["google-vertex", "google-ai-studio"], "allow_fallbacks": False}

@@ -25,7 +25,7 @@ not where it goes afterwards.
 Additional exposure surfaces beyond the LLM: the OpenRouter broker (multi-provider
 routing — see §6), the public web UI on the shared server (since 2026-09-19;
 `invoice.bestdomaininthesolarsystem.com` since 2026-09-28), and the `webruns` volume
-on that server (uploads + outputs + audit log for the last 20 runs).
+on that server (uploads + outputs + audit log for the last 100 runs).
 
 ## 2. Measurements (corpus, 2026-09-03)
 
@@ -113,16 +113,28 @@ assumption:
   `X-Forwarded-For`, so the lockout keys on the real address.
 - **Transport:** TLS via Let's Encrypt; the app port is never published on the
   host; the proxy logs at WARN level only (no request URIs with client filenames).
-- **Run retention — DECISION OPEN (user):** the `webruns` volume keeps uploads,
+- **Run retention — DECIDED 2026-09-29 (user):** the `webruns` volume keeps uploads,
   outputs and `audit.jsonl` (which names every uploaded file and, since
-  2026-09-19, error tracebacks) for the last 20 runs *on the shared box*. Options:
-  keep as is (colleagues can re-download results), shorten to N days, or delete
-  inputs after a successful run and keep only outputs + audit log. The audit log
-  itself contains client names in filenames — retention applies to it too.
-- **OpenRouter broker — DECISION OPEN (user):** review the account's
-  provider-routing/data settings (provider allowlist, logging/training opt-outs)
-  or pin a single provider via env — the broker adds parties beyond the model
-  vendor.
+  2026-09-19, error tracebacks) for the last **100** runs. Rationale: the current
+  box is a *test* server, reachable only by the consultant and the colleagues who
+  hold the password; the run history is the material for debugging the pipeline
+  before the move to the company server or a public site with a login portal.
+  **Revisit before that move** — options then: shorten to N days, or delete inputs
+  after a successful run and keep only outputs + audit log (the audit log names
+  client files too).
+- **OpenRouter broker — code side DONE 2026-09-29, account side = user:** every
+  request now carries `provider.data_collection = "deny"` (`llm/extract.py`,
+  `_openrouter_provider_config`), so only hosts that do not store prompts may serve
+  us; OpenRouter refuses (404 → 'llm-unavailable') instead of falling back. Probed
+  live for `google/gemini-2.5-flash`: under deny, under `zdr` (zero data
+  retention) and when pinned to the `google-vertex/eu` endpoint the request is
+  served by Google itself — the model has EU-resident and ZDR endpoints. Env knobs:
+  `OPENROUTER_ZDR=1`, `OPENROUTER_PROVIDERS=google-vertex/eu` (+
+  `OPENROUTER_ALLOW_FALLBACKS=0`) for EU-only routing — recommended for a German
+  consultancy's client data, decision pending. Still the user's step: the
+  account-level switch at https://openrouter.ai/settings/privacy (allow providers
+  that may train on inputs → off, for paid and free models) — the account setting
+  is the upper bound for every key.
 - **Verification copies:** for debugging, run inputs are sometimes copied from the
   server into the developer's gitignored `tmp/`; they must stay there and be
   deleted when the investigation is over.
