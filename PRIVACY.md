@@ -130,11 +130,12 @@ assumption:
   retention) and when pinned to the `google-vertex/eu` endpoint the request is
   served by Google itself — the model has EU-resident and ZDR endpoints. Env knobs:
   `OPENROUTER_ZDR=1`, `OPENROUTER_PROVIDERS=google-vertex/eu` (+
-  `OPENROUTER_ALLOW_FALLBACKS=0`) for EU-only routing — recommended for a German
-  consultancy's client data, decision pending. Still the user's step: the
-  account-level switch at https://openrouter.ai/settings/privacy (allow providers
-  that may train on inputs → off, for paid and free models) — the account setting
-  is the upper bound for every key.
+  `OPENROUTER_ALLOW_FALLBACKS=0`) for EU-only routing. **Decided and active on the
+  server since 2026-09-29:** ZDR + `google-vertex/eu` + no fallbacks (an EU-endpoint
+  outage fails runs loudly instead of routing elsewhere). The account-level switch
+  at https://openrouter.ai/settings/privacy (providers that may train on inputs →
+  off, paid and free) was set by the user the same day — the account setting is
+  the upper bound for every key.
 - **Verification copies:** for debugging, run inputs are sometimes copied from the
   server into the developer's gitignored `tmp/`; they must stay there and be
   deleted when the investigation is over.
