@@ -4,9 +4,22 @@ This file provides the context Claude needs to be effective when working on this
 
 ## What this project is
 
-A Python CLI tool that runs at the close of an EEW Modul 4 funded investment project. Inputs: the original vendor offers (the same ones that fed the ESK funding application) and all invoices paid during implementation. Output: a standardised Excel/ODS workbook (the **Kontrollmappe**) containing extracted positions from both sides, a matching table linking invoice positions to offer positions with variance per position, plus per-invoice date and address sanity checks. The consultant uses the Kontrollmappe as their primary working artifact when preparing the **Verwendungsnachweis** — the BAFA submission that proves funds were used as approved.
+A Python CLI tool that runs at the close of an EEW Modul 4 funded investment project. Inputs: the original vendor offers (the same ones that fed the ESK funding application) and all invoices paid during implementation. Output: the consultant's working tables for the **Verwendungsnachweis** — the BAFA submission that proves funds were used as approved. **The tool has exactly four procedures (user decision 2026-09-21): EEW Kostenaufstellung (`eew cost-estimation`), EEW VNE-Tabelle (`eew vne-generation`), EEW Standortbeschreibung (`eew location-description`), BEG Kostenzusammenstellung (`beg vne-generation`).** The once-planned standalone **Kontrollmappe** (a separate 7-sheet offer↔invoice matching workbook) was a misunderstanding and is REMOVED — do not rebuild it or propose it. Its position matching (variance per offer position, FEHLT/EXTRA) runs inside `eew vne-generation` and lands on a second sheet `Positionsabgleich` of the VNE workbook; the `(Vorlage VNE-Maske)` sheet itself must stay identical to the consultant's examples. Older Kontrollmappe wording further down this file is historical.
 
-**CURRENT STATE (2026-08-28): everything from vne-generation v1 onward is UNCOMMITTED on `main`** (last commit `2450790` is cost-estimation-era) — that includes vne-generation (2026-08-25) and this session's B0–B2: program-family CLI (`eew`/`beg` sub-apps), the .xlsx/.docx output migration (`template/xlsx.py`, `standort/docx.py`; `template/ods.py` legacy), the 6-class recursive classifier, `beg/funding.py` FundingMeta, and position-level invoice extraction with `check_invoice_positions` (277 unit tests green; live-validated: ZePa Σ IK within 0,01 €, BEG classification sweep clean, FundingMeta matches Aepker/Madroch consultant sheets). **Next:** offer a commit; B3 (eligibility) is blocked on two consultant-delivered fundability-rules documents (BEG 3-page PDF + separate EEW doc, both pending); B4 (Zahlungsnachweis reconciliation) and B5 (BEG EH/EM writers + E2E diff) can start anytime. See PLAN.md §"Phase 2b" build order for details incl. two B5-validation notes on Madroch's Fördersatz/caps.
+**CURRENT STATE (2026-09-29): all pipelines shipped, deployed and in first colleague use** (deployed HEAD `fda35a1` at `https://invoice.bestdomaininthesolarsystem.com`, server checkout `badserver1:/opt/invoice-controller`; this file is committed since 2026-09-29, `PRIVACY.md` is still kept local) — cost-estimation, vne-generation, location-description, BEG vne-generation (B0–B5), the web UI (U1 v1, NiceGUI, `invoice-controller serve`), the Positionsabgleich inside vne-generation (`vne/abgleich.py`: the former R6 multi-signal + LLM position matching; second sheet of the VNE workbook; zero extra tokens — offer side from the verified `Kostenaufstellung.xlsx` or the run's own live offer extraction), corrections capture (R8, `eew korrekturen`), the eval harness (R7, `tests/harness/`), and client masking with local recipient check (A1, `privacy.py`; design/analysis in the local PRIVACY.md). Research todos R1–R10 are closed (R3/R9 benchmarked and NOT adopted — records in PLAN.md); Q1–Q5 answered; Phase 4 (shared library with ESK-Generator) is DEPRECATED. 378 unit tests green; live suites opt-in via `--run-live`.
+
+**OPEN TODOS (updated 2026-09-29):**
+
+1. **Positionsabgleich acceptance ✅ in practice (2026-09-24)** — a colleague ran EK4_333 four times; after the fixes below he wrote the tool is usable for the VNE. Remaining: the consultant's own read of a `Positionsabgleich` sheet on a further project (scorer weights/thresholds still rest on ZePa + EK4_333, not a labelled corpus).
+2. **User: B3 (eligibility layer)** — blocked on the two consultant-delivered fundability-rules documents (BEG 3-page PDF + separate EEW doc). Fills the `förderfähig` column (currently empty + flagged).
+3. **Colleague feedback (EK4_333 runs 1–4, 2026-09-23/24) → concrete fix list, NOT yet built:** (a) find a Kostenaufstellung `.xlsx`/`.ods` by name pattern (`Kostenaufstellung, MKT.ods` was silently ignored) and report unused non-PDF uploads; (b) carry the document kind into `from_offer_documents` so a live-extracted Schätzung block counts as a statement (offer-less invoices got NO split in run 4); (c) Positionsabgleich: drop Anzahlung-deduction lines of a Schlussrechnung, accept Σ incl. optionals as a lump-sum target, exclude the consultant's own offer; (d) `FUE`/Fachunternehmererklärung filenames → `other`; (e) vendor-from-filename hint for image letterheads (Kempmann → 'MKT GmbH'). Plus the older U1 polish list (mid-run file-grid stability, per-run cost display, cancel granularity, second EH sheet variant).
+4. **User: A3 ops** — review OpenRouter provider/data settings (the broker adds parties beyond the model vendor); since 2026-09-28 the app's login page (`IC_WEB_PASSWORD`, per-address throttling in `web/gate.py`) is the ONLY gate — the proxy's basic_auth was dropped, so the password is mandatory on the server (fails closed) and decide the `webruns` retention question now that runs live on a shared box (local PRIVACY.md §6).
+5. **A2 — local model routing (Ollama)** for what masking can't cover (Zahlungsnachweise, BEG private clients, scans); needs a user-approved local vision model download; validate with the R7 harness before switching any tier. Design: local PRIVACY.md §5.
+6. **UI redesign ✅ (2026-09-24, done)** — web UI restyled to the EnergieKonzept-Krause brand (`web/theme.py` holds the DESIGN.md tokens; Source Sans 3 + logo vendored in `web/static/`) and restructured: `/` chooses the funding program (EEW / BEG), `/<program>` shows that program's procedures as tabs. Gotchas learned: Tailwind 4 utilities sit in a cascade layer, so any unlayered CSS `padding` on the same element silently wins over `py-*`; `ui.image` collapses with `w-auto` (use a plain `<img>`); `/laeufe` must be registered before the `/{program}` wildcard route.
+7. **Docs hygiene** — `CLAUDE.md` is committed since 2026-09-29; `PRIVACY.md` stays local (user decision). Its ops section still describes the retired ngrok `--basic-auth` path.
+8. **Server deployment ✅ (done; domain + gate changed 2026-09-28)** — `Dockerfile` (uv, tesseract+deu, poppler, healthcheck, secrets only via `env_file`), app-only `docker-compose.yml` joining the **shared Caddy proxy stack** (`~/Workspace/server-proxy` → `/opt/proxy`) over the external docker network `proxy` under alias `invoice-app`. Public host `invoice.bestdomaininthesolarsystem.com` (Let's Encrypt via Caddy; the sslip.io host is gone — corporate filters blocked it). Since 2026-09-28 the app's login page is the only gate (`web/gate.py`: 5 failures / 5 min → 15 min lockout per address; Caddy ignores client-supplied `X-Forwarded-For` by default, so the lockout keys on the real address). Do NOT add Caddy/ports back into this repo's compose file. Ollama service left out until A2. Redeploy = `git pull --ff-only && docker compose up -d --build` on the server; error tracebacks land in each run's `audit.jsonl` and `docker compose logs app`.
+9. **Rechnungen umbenennen (colleague request 2026-09-24, PLANNED, not built)** — `Rechnungssteller-Rechnungsnummer-Rechnungsdatum-Leistung.pdf` from the fields invoice extraction already yields (`vendor_name`, `invoice_number`, `invoice_date`, `subject`): a ZIP by-product of every VNE run (zero extra tokens) plus a standalone procedure in both program tabs; Windows-safe names, legal form dropped, collisions suffixed, originals untouched, an `Umbenennung.csv` mapping in the ZIP, unusable extractions keep their name. Open decisions (user): date format (`27.03.2026` vs `2026-03-27`), optional invoice-type token (`Ar`/`Sr`), standalone vs by-product vs both.
+10. **Phase 3** (after the above): full Bescheid three-way comparison (config pre-fill exists), Verwendungsnachweis draft generation, VNE-Tabelle re-run diffing.
 
 **cost-estimation (offer extraction → `Kostenaufstellung.ods`, since 2026-08-28 `.xlsx`) is implemented and shipping.** The pipeline is `pdfplumber (text) → pydantic_ai Agent (LLM extraction) → cross-sum check → odfdo .ods writer`, with a tiered fallback for scanned PDFs (no text layer → local Tesseract OCR → cloud vision-LLM). 166 unit tests pass (corpus-backed ones auto-skip when `examples/` is absent); live E2E tests pass against `examples/EK4_204/` (offers) and `examples/EK4_322/` (a scanned client statement). The user opens the generated `.ods` in LibreOffice for verification (the Textual TUI is on the vne-generation roadmap).
 
@@ -45,7 +58,7 @@ The proof-of-funds-usage submission to BAFA at the end of a funded project. Docu
 - A recalculated Förderbetrag based on actual spending (BAFA pays out the lower of approved and actual)
 - Declarations and signatures
 
-The Kontrollmappe this tool produces is the consultant's working artifact for assembling the Verwendungsnachweis. The Verwendungsnachweis itself is currently filled in by hand by the consultant; document generation is a Phase 3 candidate for the tool.
+The VNE-Tabelle this tool produces (with its Positionsabgleich sheet) is the consultant's working artifact for assembling the Verwendungsnachweis. The Verwendungsnachweis itself is currently filled in by hand by the consultant; document generation is a Phase 3 candidate for the tool.
 
 ### Bewilligungsbescheid / Zuwendungsbescheid
 
@@ -95,7 +108,8 @@ The energy consultant's own service is itself a position in the cost calculation
 | Förderbetrag                    | Funding amount                                                     |
 | Förderquote / Förderanteil      | Funding rate / share                                               |
 | Investitionskosten              | Investment costs (eligible category)                               |
-| Kontrollmappe                   | Reconciliation workbook — this tool's primary output               |
+| Kontrollmappe                   | REMOVED 2026-09-21 — former standalone matching workbook; see Positionsabgleich |
+| Positionsabgleich               | Offer↔invoice position matching — second sheet of the VNE workbook |
 | Mehrkosten / Mehrkosten-Anteil  | Additional costs / funding rate on additional costs                |
 | Mittelabruf                     | Funds request (interim disbursement during project)                |
 | MwSt. / USt.                    | VAT (Mehrwertsteuer / Umsatzsteuer)                                |
@@ -133,7 +147,7 @@ For close-out / Verwendungsnachweis examples, browse the live project folders ca
 - Look for sub-folders named `Verwendungsnachweis`, `Schlussrechnung`, `Rechnungen`, or files with `Bescheid`, `Auszahlung` in the name
 - Bescheide are often in the project root (e.g., a `Bescheid_*.pdf` or `Zuwendungsbescheid_*.pdf`)
 
-Once the user populates `examples/` in this project with a curated corpus of close-out cases (offer + all invoices + the Kontrollmappe the consultant built manually), that becomes the primary reference. Until then, treat live folders as read-only and do not commit any of their data.
+Once the user populates `examples/` in this project with a curated corpus of close-out cases (offer + all invoices + the VNE-Tabelle the consultant built manually), that becomes the primary reference. Until then, treat live folders as read-only and do not commit any of their data.
 
 ## Current implementation (cost-estimation)
 
@@ -155,6 +169,8 @@ The real code lives in `src/invoice_controller/`. The 2024 prototype `test.py` i
 - `src/invoice_controller/cli.py` — Typer entry with one sub-app per program: `eew cost-estimation <path>` (single PDF or directory; directories are classified and only offer-classified PDFs run), `eew vne-generation <project_dir>`, `eew location-description <project_dir>` (`.docx`), `beg vne-generation <project_dir>` (currently classification + FundingMeta report; writer follows in B5). Statement docs print a yellow `ⓘ Schätzung` line instead of the offer cross-sum pass/fail line.
 - `src/invoice_controller/extract/classify.py` — the shared 6-class document classifier (offer / invoice / antragsbestaetigung / zuwendungsbescheid / zahlungsnachweis / other), recursive folder walk incl. PNG/JPEG payment-proof images, filename → parent-folder → first-page-text tiers, undecidable PDFs default LOUDLY to invoice.
 - `src/invoice_controller/beg/funding.py` — FundingMeta extraction (pydantic_ai, temperature 0) from the classified Antragsbestätigung/BzA + Zuwendungsbescheid: program type EH/EM, Vorgangsnummer, dates, geplante Kosten, Fördersätze/caps, and the client basis (privat→brutto / unternehmen→netto). Absent fields stay None and render red-flagged "fehlt" — never guessed, never user input.
+- `src/invoice_controller/web/{app,registry,jobs,errors,gate,theme}.py` — the NiceGUI UI: `/` chooses the program, `/<program>` shows its procedures as tabs (registry `PROGRAMS`/`procedures_for`), jobs run in worker threads with an `audit.jsonl` per run (error tracebacks included), `gate.py` is the throttled single-password login, `theme.py` the EnergieKonzept-Krause brand (DESIGN.md tokens; font/logo vendored in `web/static/`). UI gotchas: Tailwind 4 utilities sit in a cascade layer (unlayered `padding` beats `py-*`), `ui.image` collapses with `w-auto`, `/laeufe` must be registered before the `/{program}` wildcard.
+- `src/invoice_controller/vne/abgleich.py` — the Positionsabgleich: offer side from `Kostenaufstellung.xlsx`/PDF positions or the run's live offers, per-vendor matching (`match/positions.py` scorer + `match/llm.py` leftovers), lump-sum rule, statement/own-company exclusions; rendered as the workbook's second sheet by `vne/xlsx.py` (the VNE-Maske sheet must stay identical to the consultant's examples — number formats are copied from them).
 - `tests/conftest.py` — `FunctionModel`-based stub agent for unit tests, `--run-live` opt-in flag, fixture loaders.
 - `tests/ods_inspect.py` — semantic reader for output `.ods` (used by regression tests and the diff tool).
 - `tests/diff_kostenaufstellung.py` — CLI for semantic diff between two Kostenaufstellung `.ods` files.
@@ -203,7 +219,7 @@ Client invoices and offers are sensitive. Same as ESK-Generator: per-section mod
 
 The user has chosen to keep Invoice-Controller fully independent from ESK-Generator: re-extract the offer from PDF rather than read the ESK-Generator's `.ods`. This costs some duplicate extraction work per project but keeps the tool self-contained and usable for projects that did not go through ESK-Generator at all.
 
-A shared `bafa-tooling-common` library extraction is planned for Phase 4 once both tools have settled patterns. Until then, accept code duplication as a deliberate v1 trade-off.
+A shared `bafa-tooling-common` library extraction was once planned (Phase 4) and is DEPRECATED since 2026-09-03 — code duplication with ESK-Generator is accepted permanently; the tools stay independent.
 
 ### Bulk verification UX is mandatory
 
@@ -218,13 +234,13 @@ Designs that require clicking through every position are unacceptable. Plan arou
 
 ## Architectural decisions and rationale
 
-### Why a standardised Kontrollmappe rather than a markdown report?
+### Why standardised workbooks rather than a markdown report?
 
 The user works in LibreOffice. The output of this tool feeds directly into the Verwendungsnachweis preparation, which is itself manual table work. A `.ods` workbook lands in the consultant's native tool, supports row-level edits, and serves as the working artifact for the rest of the close-out process. A markdown report would force a copy-paste into Excel anyway.
 
 ### Why independent re-extraction rather than reading ESK-Generator's `.ods`?
 
-The user chose this in design discussion. Trade-off: duplicate extraction work per project, but the tool works for projects that did not go through ESK-Generator (older projects, projects done before ESK-Gen existed). Phase 4's shared library reduces the duplication without coupling the two tools' deployment.
+The user chose this in design discussion. Trade-off: duplicate extraction work per project, but the tool works for projects that did not go through ESK-Generator (older projects, projects done before ESK-Gen existed). The once-planned Phase-4 shared library is deprecated (2026-09-03) — the duplication is accepted permanently.
 
 ### Why two inputs (offer + invoices) rather than three (+ Bescheid)?
 
@@ -245,10 +261,10 @@ Most matches are within-vendor (an invoice line for vendor X corresponds to an o
 ## What NOT to do
 
 - **Do not skip the cross-sum check on extraction.** Same rule as ESK-Generator: extracted lines must sum to the document's stated grand total exactly, or extraction is treated as failed.
-- **Do not skip the verification step on matching.** Auto-matched proposals are always proposals; nothing writes to the Kontrollmappe until the consultant has confirmed (in bulk or per-line, but always confirmed).
+- **Do not skip the verification step on matching.** Auto-matched proposals are always proposals; the Positionsabgleich sheet presents them as proposals (confidence tier, red on any variance) for the consultant to confirm — it never feeds back into a VNE figure.
 - **Do not silently apply or strip MwSt./VAT.** Offers and invoices are usually netto; if an amount is brutto without clear breakdown, flag it.
 - **Do not match across vendors by default.** Same item invoiced by a sub-contractor with a different name is a special case requiring explicit override.
-- **Do not silently commit when re-running** for a project that already has a Kontrollmappe. Hash-detect changes, require `--overwrite`, produce a diff report.
+- **Do not silently commit when re-running** for a project that already has a generated output workbook. Hash-detect changes, require `--overwrite`, produce a diff report.
 - **Do not couple this tool to ESK-Generator** in v1. The user has chosen the independent boundary deliberately. Resist the temptation to read the ESK-Gen `.ods` "for convenience."
 - **Do not write code documentation for what code does** — only why. Same convention as ESK-Generator.
 - **Do not commit client-confidential data** to the repo. Examples must be anonymised if shared beyond the user's machine.

@@ -1,17 +1,17 @@
 # Invoice-Controller
 
-A Python CLI for closing out funded projects across program families (EEW Modul 4; BEG in progress), in preparation for the **Verwendungsnachweis** submission. It extracts structured data from German vendor offers and paid invoices and writes the consultant's working artifacts. Since 2026-08-28 all outputs are Microsoft-native (`.xlsx` tables, `.docx` documents) and the CLI nests one sub-app per program: `eew cost-estimation`, `eew vne-generation`, `eew location-description`, `beg vne-generation` (building).
+A Python CLI for closing out funded projects across program families (EEW Modul 4 and BEG), in preparation for the **Verwendungsnachweis** submission. It extracts structured data from German vendor offers and paid invoices and writes the consultant's working artifacts. Since 2026-08-28 all outputs are Microsoft-native (`.xlsx` tables, `.docx` documents) and the CLI nests one sub-app per program: `eew cost-estimation`, `eew vne-generation`, `eew location-description`, `beg vne-generation`.
 
 For the funding-lifecycle context, German terminology, and design rationale, see [CLAUDE.md](CLAUDE.md).
 
 ## Status
 
-Three procedures, at different stages:
+Four procedures:
 
 - **cost-estimation / `eew cost-estimation` — offer extraction → `Kostenaufstellung.xlsx` — shipping.** Given one or more offer PDFs, the tool extracts vendor metadata, all priced positions (including optionals), totals, and (where present) Sonderpreis / Preisnachlass; classifies each position into Investitionskosten / Nebenkosten / Nachlass; and writes a styled, formula-driven `.xlsx` (locale-independent number formats render `1.000,00 €` on German systems). Scanned PDFs (no text layer) fall back to local Tesseract OCR, then a cloud vision-LLM. Client cost statements (*Stellungnahme* / *Schätzung*) are handled alongside vendor offers. A cross-sum check guards every extraction.
 - **location-description / `eew location-description` — client Standortbeschreibung → `.docx` — shipping.** Reads a project's filled *Fragenkatalog Modul 4* PDF (or ad-hoc `--firma/--strasse/--plz/--stadt`), scrapes the client website, derives geo facts offline (PLZ → Bundesland/Regierungsbezirk via pgeocode; Kreis/roads via OpenStreetMap), and assembles the German company/location description required by Antrag section 1.2. No LLM is used for the geo data.
 - **vne-generation / `eew vne-generation` — invoices → VNE-Tabelle `.xlsx` — shipping.** Classifies every document in the project folder, extracts each invoice (header + all line items, with a per-invoice position cross-sum against the stated netto), splits the netto by the vendor's cost-estimation IK/NK ratio, and writes the 3-category VNE-Tabelle with red-flagged check failures. A second sheet, `Positionsabgleich`, matches invoice positions to offer positions per vendor (variance per position, `FEHLT` for offered-but-never-invoiced, `EXTRA` for invoiced-but-never-offered) — a scope check the per-vendor ratio split cannot do. It reuses the run's own extractions, so it costs no second pass; the VNE sheet itself stays identical to the consultant's template.
-- **BEG vne-generation / `beg vne-generation` — BEG Kostenzusammenstellung — building (B1 done).** Classifies BEG project folders (6 document classes incl. Zahlungsnachweis images) and extracts the program parameters (FundingMeta) from the Antragsbestätigung/BzA + Zuwendungsbescheid. The `.xlsx` writer follows.
+- **BEG vne-generation / `beg vne-generation` — invoices → BEG Kostenzusammenstellung `.xlsx` — shipping (B0–B5).** Classifies BEG project folders (6 document classes incl. Zahlungsnachweis images), extracts the program parameters (Vorgangsnummer, Fördersätze, caps, dates, client basis brutto/netto) from the Antragsbestätigung/BzA + Zuwendungsbescheid, extracts every invoice position-level with a cross-sum, reconciles `bezahlt` against the payment proofs and writes the Kostenzusammenstellung. The `förderfähig` column stays empty and flagged until the fundability-rules documents arrive (B3).
 
 ## Prerequisites
 
@@ -68,6 +68,10 @@ cp .env.example .env    # provider key + IC_WEB_PASSWORD + IC_WEB_STORAGE_SECRET
 docker compose up -d --build     # proxy stack must be running (it owns the network)
 ```
 
+Public host: `https://invoice.bestdomaininthesolarsystem.com` (set as `INVOICE_HOST` in the proxy's
+`.env`; Caddy obtains the Let's Encrypt certificate itself). Redeploy after a push:
+`git pull --ff-only && docker compose up -d --build` in the server checkout.
+
 The app port is never published on the host — Caddy is the only entrance. Run history
 persists in the `webruns` volume (last 20 runs; on a shared box, mind that it holds
 client documents). The image bundles tesseract+deu and poppler; the LLM key comes from
@@ -97,6 +101,35 @@ uv run invoice-controller eew location-description path/to/project-folder --url 
 
 Without a Fragenkatalog you can drive it ad-hoc: `--firma "Muster GmbH" --strasse "Hauptstr. 1" --plz 59227 --stadt Ahlen --url example.com`. Use `--offline` to skip the OSM Kreis/road lookups, `--betreiber` for a distinct operating tenant, and `--schicht 1|2|3` to override the shift model (→ working hours 8–16 / 8–12 / 8–8).
 
+## Run vne-generation
+
+`invoice-controller eew vne-generation <project_dir>` classifies the folder, extracts every invoice
+(header + positions, per-invoice cross-sum), splits each netto by the vendor's IK/NK ratio and
+writes `VNE-Tabelle.xlsx`. The ratio source, in priority order: a verified `Kostenaufstellung.xlsx`
+(or `.ods`) in the folder → a consultant-built Kostenaufstellung PDF → live extraction of the
+offer PDFs (the only tier that costs offer-side LLM calls). A `projekt.yaml` supplies client,
+Bewilligungszeitraum and Bescheid figures; the web UI takes them as form fields and pre-fills
+them from an uploaded Zuwendungsbescheid.
+
+```sh
+uv run invoice-controller eew vne-generation path/to/project-folder/ [--no-llm-matching]
+```
+
+The second sheet, `Positionsabgleich`, is the scope check: invoice positions matched to offer
+positions per vendor (article number, description, price, quantity; an LLM pass only for what
+stays unmatched), variance per position in red, `FEHLT` / `EXTRA` rows, and a lump-sum rule for
+vendors that bill the whole order as one line. Every match is a proposal for the consultant.
+
+## Run BEG vne-generation
+
+```sh
+uv run invoice-controller beg vne-generation path/to/beg-project/
+```
+
+Same classifier and invoice extraction; program metadata comes from the project's own
+Antragsbestätigung/BzA + Zuwendungsbescheid (no config file), payment proofs go in a
+`Zahlungsnachweise/` subfolder (or the second dropzone of the web UI).
+
 ## How cost-estimation extraction works
 
 1. **PDF text** — pdfplumber pulls layout-preserved text per page. If there's no text layer, it routes to local Tesseract OCR, then a cloud vision-LLM.
@@ -122,24 +155,31 @@ uv run pytest tests/e2e --run-live -q
 Invoice-Controller/
 ├── README.md                       — this file
 ├── CLAUDE.md                       — domain context for assistant sessions
+├── PLAN.md                         — architecture, decisions, research records (gitignored, local)
 ├── pyproject.toml                  — uv project + ruff/mypy/pytest config
-├── .env.example                    — copy to .env and add a provider key
+├── .env.example                    — copy to .env: provider key, IC_WEB_PASSWORD, IC_WEB_STORAGE_SECRET
+├── Dockerfile / docker-compose.yml — server image + app-only stack behind the shared Caddy proxy
 ├── src/invoice_controller/
-│   ├── cli.py                      — Typer CLI: eew/beg program sub-apps
-│   ├── models.py                   — Pydantic: OfferDocument, Position, OfferTotals, CrossSumCheck, …
+│   ├── cli.py                      — Typer CLI: eew/beg program sub-apps, serve, korrekturen
+│   ├── config.py                   — projekt.yaml (client, Bewilligungszeitraum, Bescheid figures)
+│   ├── models.py                   — Pydantic: OfferDocument, InvoiceDocument, Position, CrossSumCheck, …
 │   ├── normalize.py                — German number / date / umlaut / soft-hyphen helpers
+│   ├── privacy.py                  — client masking for LLM payloads + local recipient check
 │   ├── geo.py                      — offline PLZ geo (pgeocode) + OSM Kreis/roads
 │   ├── pdf/                        — pdfplumber text + OCR routing (Tesseract / vision)
-│   ├── extract/                    — orchestrator, cross-sum check
-│   ├── llm/                        — pydantic_ai Agent, prompt, provider resolution, HTTP retry
-│   ├── narrative.py                — deterministic prose-block assembly for the description sheet
+│   ├── extract/                    — classifier, offer/invoice/Bescheid extraction, orchestrators (vne, beg)
+│   ├── llm/                        — pydantic_ai Agents, prompts, provider resolution, HTTP retry
+│   ├── match/                      — vendor matching; position scorer + LLM assist for the Positionsabgleich
+│   ├── vne/                        — ratios, compute, Positionsabgleich (abgleich.py), VNE-Tabelle writer
+│   ├── beg/                        — funding meta, payments, Gewerke, compute, Kostenzusammenstellung writer
 │   ├── standort/                   — location-description: Fragenkatalog parse, scrape, assemble, .docx writer
-│   └── template/
-│       ├── ods.py                  — odfdo Kostenaufstellung renderer
-│       └── template.ods            — shipped template (sanitized placeholder headers)
+│   ├── audit/                      — consultant-corrections capture (korrekturen.jsonl)
+│   ├── web/                        — NiceGUI UI: app (pages), registry (procedures), jobs, errors, gate, theme, static/
+│   └── template/                   — Kostenaufstellung writers: xlsx.py (current), ods.py + template.ods (legacy)
 ├── tests/
 │   ├── conftest.py                 — FunctionModel stub agent, fixtures, --run-live flag
 │   ├── corpus/                     — ground-truth readers (cost-estimation PDF, vne-generation VNE .xlsx)
+│   ├── harness/                    — typed extraction-eval harness (live corpus baseline)
 │   ├── unit/                       — fast, deterministic tests (corpus-backed ones auto-skip)
 │   └── e2e/                        — live API tests (opt-in via --run-live)
 ├── examples/                       — client-confidential corpus (gitignored, not shipped)
@@ -147,9 +187,19 @@ Invoice-Controller/
 └── test.py                         — historical 2024 prototype (kept for reference; not used)
 ```
 
-## What's next (vne-generation)
+## What's next
 
-Invoice extraction, per-invoice date/address sanity checks, per-vendor multi-signal matching with confidence tiers, a bulk-approve verification UX, and the **VNE-Tabelle** `.xlsx` output (per-vendor Investitionskosten / Nebenkosten ratio).
+- **Robustness from the first colleague runs (EK4_333, 2026-09-24):** find a Kostenaufstellung
+  `.xlsx`/`.ods` by pattern (not only the exact name) and report unused non-PDF uploads; carry the
+  document kind into live-extracted ratios so a Schätzung block is recognised; ignore
+  Anzahlung-deduction lines in the Positionsabgleich and accept Σ incl. optionals as a lump-sum
+  target; keep the consultant's own offer out of the Abgleich; route Fachunternehmererklärungen
+  to `other`.
+- **Invoice renaming** (`Rechnungssteller-Rechnungsnummer-Rechnungsdatum-Leistung.pdf`), requested
+  by a colleague — planned as a ZIP by-product of every VNE run plus a standalone procedure.
+- **B3 eligibility layer** for BEG once the fundability-rules documents arrive.
+- **A2 local model routing (Ollama)** for scans and other content masking cannot cover.
+- **Phase 3:** Bescheid three-way comparison, Verwendungsnachweis draft, re-run diffing.
 
 ## Sibling project
 

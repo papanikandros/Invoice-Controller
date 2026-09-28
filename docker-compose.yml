@@ -1,8 +1,9 @@
 # Invoice-Controller server deployment: the NiceGUI web UI only.
-# TLS, hostnames and the outer basic-auth live in the SHARED Caddy stack
-# (~/Workspace/server-proxy → /opt/proxy on the server), which reaches this app
-# over the external docker network "proxy" under the alias "invoice-app".
-# The app port is never published on the host; IC_WEB_PASSWORD stays the inner gate.
+# TLS and the hostname live in the SHARED Caddy stack (~/Workspace/server-proxy →
+# /opt/proxy on the server), which reaches this app over the external docker network
+# "proxy" under the alias "invoice-app". The app port is never published on the host.
+# Access control is the app's own login page (IC_WEB_PASSWORD, throttled per address) —
+# the proxy adds no basic-auth since 2026-09-28, so the password is REQUIRED here.
 #
 #   cp .env.example .env        # provider key + IC_WEB_PASSWORD + IC_WEB_STORAGE_SECRET
 #   docker compose up -d --build   (the proxy stack must be up first: it creates the network)
