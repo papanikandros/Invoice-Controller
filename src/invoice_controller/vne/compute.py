@@ -122,6 +122,48 @@ class VneResult:
         return min(beantragt, actual)
 
 
+def _number_digits(number: str) -> str:
+    return "".join(ch for ch in number if ch.isdigit())
+
+
+def _numbers_similar(a: str, b: str) -> bool:
+    """Scan readings of one invoice number drift ('705110' vs 'Z05110', '07/058' vs
+    '07 / 058'): equal after dropping whitespace, or one digit string is a ≥5-digit
+    suffix of the other."""
+    na, nb = "".join(a.split()).lower(), "".join(b.split()).lower()
+    if na and na == nb:
+        return True
+    da, db = _number_digits(a), _number_digits(b)
+    return len(da) >= 5 and len(db) >= 5 and (da.endswith(db) or db.endswith(da))
+
+
+def _duplicate_of(
+    inv: InvoiceDocument, booked: list[InvoiceDocument]
+) -> tuple[str, InvoiceDocument | None]:
+    """Same document uploaded twice — as different scans, its invoice number, date and
+    even vendor can come out differently (EK4_333 run 5, 2026-09-29: three pairs slipped
+    through an exact (number, netto) key and Σ NK was 6.715 € too high).
+
+    "duplicate" (excluded from every sum): same netto AND at least two of the identity
+    signals agree — number (scan-tolerant), date, vendor, or the identical multiset of
+    position amounts. "same-amount" (counted, flagged): same netto + vendor only — two
+    genuine Abschläge over the same amount are common, so this stays a question."""
+    for first in booked:
+        if first.netto != inv.netto or inv.netto == 0:
+            continue
+        number = _numbers_similar(first.invoice_number, inv.invoice_number)
+        date = first.invoice_date == inv.invoice_date
+        vendor = bool(normalize_vendor(first.vendor_name) & normalize_vendor(inv.vendor_name))
+        positions = bool(inv.positions) and sorted(p.line_total_net for p in first.positions) == sorted(
+            p.line_total_net for p in inv.positions
+        )
+        if sum((number, date, vendor, positions)) >= 2:
+            return "duplicate", first
+        if vendor:
+            return "same-amount", first
+    return "none", None
+
+
 def _address_matches(recipient: str | None, client_name: str, client_address: str | None) -> bool | None:
     """Fuzzy token check of the invoice's billed party against the configured client.
     None when the invoice carries no recipient (nothing to check, flag separately)."""
@@ -147,7 +189,7 @@ def compute_vne(
     # under different filenames (seen live: Dannemann, Jacob, Presspart). The first
     # occurrence is booked; later ones flag as duplicates with NO split so sums
     # are never double-counted — the consultant confirms and deletes.
-    seen_first: dict[tuple[str, Decimal], InvoiceDocument] = {}
+    booked: list[InvoiceDocument] = []
     for inv in invoices:
         own = is_own_company(inv.vendor_name)
         ratio = None if own else match_vendor(inv.vendor_name, ratios)
@@ -157,15 +199,19 @@ def compute_vne(
         flags: list[str] = []
         unusable = False
 
-        dup_key = (inv.invoice_number.strip().lower(), inv.netto)
-        first = seen_first.get(dup_key)
-        if first is not None and (normalize_vendor(first.vendor_name) & normalize_vendor(inv.vendor_name)):
+        verdict, first = _duplicate_of(inv, booked)
+        if verdict == "duplicate" and first is not None:
             flags.append(
                 f"mögliches Duplikat von {first.source_path.name} — nicht aufgeteilt, manuell prüfen"
             )
             unusable = True
         else:
-            seen_first.setdefault(dup_key, inv)
+            if verdict == "same-amount" and first is not None:
+                flags.append(
+                    f"gleicher Nettobetrag und Lieferant wie {first.source_path.name} — "
+                    "Duplikat? gezählt, bitte prüfen"
+                )
+            booked.append(inv)
 
         if inv.netto == 0:
             # A 0-€ invoice is almost always a failed extraction (bad scan) — a real

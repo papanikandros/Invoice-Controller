@@ -568,3 +568,48 @@ def test_offerless_vendor_with_two_statement_blocks_stays_manual() -> None:
     row = result.invoices[0]
     assert not row.splits
     assert any("manuell kategorisieren" in f for f in row.flags)
+
+
+class TestScanDuplicates:
+    """EK4_333 run 5 (2026-09-29): the same invoices uploaded as different scans."""
+
+    @staticmethod
+    def _inv(name, vendor, number, day, netto, positions=()):
+        from datetime import date
+
+        from invoice_controller.models import AmountCheck, InvoicePosition
+
+        return InvoiceDocument(
+            source_path=Path(name), vendor_name=vendor, invoice_number=number,
+            invoice_date=date(2026, 7, day) if day else date(2020, 1, 1), netto=Decimal(netto),
+            amount_check=AmountCheck(passed=True),
+            positions=[InvoicePosition(pos="", description="x", line_total_net=Decimal(a)) for a in positions],
+        )
+
+    def _rows(self, invoices):
+        return {r.invoice.source_path.name: r for r in compute_vne(invoices, [], ProjektConfig()).invoices}
+
+    def test_scan_variants_of_one_number_are_duplicates(self) -> None:
+        rows = self._rows([
+            self._inv("RG705110.pdf", "Rudi Sönnecken", "705110", 23, "4210.30"),
+            self._inv("Soennecken.pdf", "Rudi Sönnecken - Valbert", "Z05110", 23, "4210.30"),
+            self._inv("Rg07058.pdf", "Franz Kempmann Transport GmbH", "07/058", 23, "595.70"),
+            self._inv("Z07058.pdf", "MKT GmbH", "07 / 058", 23, "595.70"),   # vendor = recipient (image letterhead)
+        ])
+        assert not rows["RG705110.pdf"].unusable and rows["Soennecken.pdf"].unusable
+        assert not rows["Rg07058.pdf"].unusable and rows["Z07058.pdf"].unusable
+
+    def test_garbage_number_and_date_still_caught_by_position_fingerprint(self) -> None:
+        rows = self._rows([
+            self._inv("Rg705174.pdf", "Rudi Sönnecken - Valbert", "020", 0, "954.73", ("500.00", "692.33")),
+            self._inv("doc0239.pdf", "Rudi Sönnecken", "09a 20", 18, "954.73", ("692.33", "500.00")),
+        ])
+        assert rows["doc0239.pdf"].unusable
+
+    def test_same_amount_only_is_flagged_but_counted(self) -> None:
+        rows = self._rows([
+            self._inv("A1.pdf", "Bau GmbH", "A-1", 1, "10000.00"),
+            self._inv("A2.pdf", "Bau GmbH", "A-2", 15, "10000.00"),        # a second Abschlag over the same amount
+        ])
+        assert not rows["A2.pdf"].unusable
+        assert any("Duplikat?" in f for f in rows["A2.pdf"].flags)
