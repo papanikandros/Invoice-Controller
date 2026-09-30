@@ -88,6 +88,24 @@ class TestJobStore:
         assert "traceback" not in errors[1]
         assert "failing_helper" in capsys.readouterr().err
 
+    def test_feedback_is_audited_and_rehydrated(self, tmp_path: Path) -> None:
+        """Consultant verdict (2026-09-30): boolean + text, latest wins, survives restart."""
+        store = JobStore(tmp_path)
+        job = store.create("eew-vne-generation", "EK4_333")
+        job.status = "fertig"
+        job._audit("finished", status="fertig")
+        job.set_feedback(verified=False, text="Sönnecken doppelt gezählt")
+        job.set_feedback(verified=True, text="nach Korrektur ok")
+        assert job.verified and job.feedback == "nach Korrektur ok"
+
+        fresh = JobStore(tmp_path)
+        fresh.load_history()
+        loaded = fresh.jobs[job.id]
+        assert loaded.verified is True and loaded.feedback == "nach Korrektur ok"
+        assert loaded.feedback_at is not None
+        events = [json.loads(l) for l in (job.run_dir / "audit.jsonl").read_text().splitlines()]
+        assert [e["verified"] for e in events if e["event"] == "feedback"] == [False, True]
+
     def test_retention_prunes_old_runs(self, tmp_path: Path) -> None:
         store = JobStore(tmp_path)
         for i in range(RETAIN_RUNS + 5):

@@ -55,6 +55,13 @@ class Job:
     flags: list[str] = field(default_factory=list)      # review flags (not errors)
     errors: list[UserError] = field(default_factory=list)
     finished: datetime | None = None
+    # Consultant's verdict on the finished run (2026-09-30): the boolean is the
+    # acceptance signal, the text says what was wrong and why. Both live in
+    # audit.jsonl (event "feedback", latest wins) so they survive restarts and travel
+    # with the run when it is inspected.
+    verified: bool = False
+    feedback: str = ""
+    feedback_at: datetime | None = None
     # Bumped on every event — the job page refreshes ONLY when this changes, so an
     # idle page never re-renders (re-rendering collapses expansions and kills text
     # selection; fixed 2026-09-03).
@@ -112,6 +119,13 @@ class Job:
         with self._lock:
             self.outputs.append(path)
         self._audit("output", file=str(path))
+
+    def set_feedback(self, *, verified: bool, text: str) -> None:
+        with self._lock:
+            self.verified = verified
+            self.feedback = text.strip()
+            self.feedback_at = datetime.now()
+        self._audit("feedback", verified=verified, text=self.feedback)
 
     def cancel(self) -> None:
         if self._task is not None and not self._task.done():
@@ -217,6 +231,10 @@ class JobStore:
                     elif entry["event"] == "finished":
                         job.status = entry.get("status", "fertig")
                         job.finished = datetime.fromisoformat(entry["ts"])
+                    elif entry["event"] == "feedback":
+                        job.verified = bool(entry.get("verified", False))
+                        job.feedback = entry.get("text", "")
+                        job.feedback_at = datetime.fromisoformat(entry["ts"])
             except (json.JSONDecodeError, KeyError, ValueError):
                 job.status = "fehler"
             if job.status == "läuft":      # server died mid-run

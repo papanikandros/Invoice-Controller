@@ -168,6 +168,40 @@ def _procedure_panel(proc: Procedure) -> None:
         counter = ui.label("0 Datei(en) bereit").classes("ic-label")
 
 
+def _feedback_panel(job: Job) -> None:
+    """Consultant's verdict on a finished run: the verified toggle (the acceptance
+    boolean) and free text on what was wrong and why. Saved into the run's audit log."""
+    with ui.element("section").classes("ic-band w-full mt-8 rounded-lg"):
+        with ui.element("div").classes("px-6 py-5 flex flex-col gap-2"):
+            ui.label("Prüfung durch den Bearbeiter").classes("ic-headline")
+            ui.label("Ergebnis mit den Belegen abgeglichen? Der Schalter ist die Freigabe; "
+                     "das Textfeld hält fest, was nicht gestimmt hat und warum.").classes("ic-muted")
+            verified = ui.switch("Ergebnis geprüft und korrekt", value=job.verified).classes("mt-1")
+            text = ui.textarea("Was war falsch / Anmerkungen", value=job.feedback,
+                               placeholder="z. B. Rechnung X doppelt gezählt; Anteil bei Y müsste 100 % NK sein") \
+                .props("autogrow").classes("w-full max-w-3xl")
+            with ui.row().classes("items-center gap-6 mt-2"):
+                stamp = ui.label(
+                    f"zuletzt gespeichert {job.feedback_at:%d.%m.%Y %H:%M}" if job.feedback_at else "noch keine Rückmeldung"
+                ).classes("ic-label")
+
+                def save() -> None:
+                    job.set_feedback(verified=bool(verified.value), text=text.value or "")
+                    stamp.set_text(f"zuletzt gespeichert {job.feedback_at:%d.%m.%Y %H:%M}")
+                    ui.notify("Rückmeldung gespeichert", type="positive")
+
+                ui.button("Rückmeldung speichern", icon="check", on_click=save).classes("ic-btn")
+
+
+def _verification_badge(job: Job) -> None:
+    if job.verified:
+        ui.label("geprüft ✓").classes("ic-badge").style(f"background:{theme.BROWN};color:{theme.SURFACE}")
+    elif job.feedback:
+        ui.label("Rückmeldung").classes("ic-badge").style(f"background:{theme.PARCHMENT};color:{theme.GRAPHITE}")
+    elif job.status != "läuft":
+        ui.label("ungeprüft").classes("ic-badge").style(f"background:{theme.MIST};color:{theme.GRAPHITE}")
+
+
 @ui.page("/")
 def index() -> None:
     theme.install()
@@ -211,6 +245,7 @@ def history() -> None:
                 with ui.row().classes("ic-row items-center gap-4 py-3 w-full flex-nowrap"):
                     ui.label(f"{job.created:%d.%m.%Y %H:%M}").classes("text-sm ic-muted shrink-0 w-32")
                     theme.badge(job.status)
+                    _verification_badge(job)
                     ui.link(job.title, f"/lauf/{job.id}").classes("ic-link truncate")
                     ui.space()
                     if job.errors:
@@ -300,6 +335,9 @@ def job_page(job_id: str) -> None:
         # The Protokoll expansion lives OUTSIDE the refreshable: a refresh would recreate
         # it, collapsing its open state and discarding any text selection (reported
         # 2026-09-03). Its content is updated in place instead.
+        if job.status != "läuft":
+            _feedback_panel(job)
+
         with ui.expansion("Protokoll", icon="terminal").classes("ic-log w-full mt-6"):
             log_label = ui.label("\n".join(job.progress[-60:]) or "—").classes(
                 "text-xs whitespace-pre-wrap font-mono"
