@@ -294,3 +294,15 @@ class TestOpenRouterDataPolicy:
         })
         assert cfg == {"data_collection": "allow", "zdr": True,
                        "only": ["google-vertex", "google-ai-studio"], "allow_fallbacks": False}
+
+
+class TestMandatoryRuleDates:
+    def test_antragstellung_and_bescheid_date_are_required_on_the_eew_vne_tab(self) -> None:
+        """User decision 2026-10-05: the two dates the fundability checks depend on are
+        mandatory form fields — a run without them must not start."""
+        from invoice_controller.web.registry import PROCEDURES
+
+        vne = next(p for p in PROCEDURES if p.key == "eew-vne-generation")
+        required = {f.key for f in vne.fields if f.required}
+        assert {"projekt", "antragstellung", "bescheid_datiert"} <= required
+        assert "aavm_genehmigung" not in required and "bescheid_eingegangen" not in required

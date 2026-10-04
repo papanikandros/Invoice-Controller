@@ -473,10 +473,12 @@ PROCEDURES: tuple[Procedure, ...] = (
             PROJEKT_FIELD,
             FieldSpec("kunde_name", "Kunde (Name)", placeholder="z. B. ZePa GmbH"),
             FieldSpec("kunde_adresse", "Kunde (Adresse)", placeholder="Straße Nr., PLZ Ort"),
-            FieldSpec("antragstellung", "Antragstellung (Datum)", placeholder="TT.MM.JJJJ"),
+            # Mandatory since 2026-10-05 (user): without them the two fundability checks
+            # cannot run, and a sheet that silently passes is worse than a refused start.
+            FieldSpec("antragstellung", "Antragstellung (Datum)", placeholder="TT.MM.JJJJ", required=True),
             FieldSpec("aavm_genehmigung", "AavM-Genehmigung (Datum, falls vorzeitiger Maßnahmenbeginn)", placeholder="TT.MM.JJJJ"),
             FieldSpec("bescheid_eingegangen", "Zuwendungsbescheid eingegangen am", placeholder="TT.MM.JJJJ"),
-            FieldSpec("bescheid_datiert", "Zuwendungsbescheid datiert", placeholder="TT.MM.JJJJ"),
+            FieldSpec("bescheid_datiert", "Zuwendungsbescheid datiert", placeholder="TT.MM.JJJJ", required=True),
             FieldSpec("zeitraum_von", "Bewilligungszeitraum von", placeholder="TT.MM.JJJJ"),
             FieldSpec("zeitraum_bis", "Bewilligungszeitraum bis", placeholder="TT.MM.JJJJ"),
             FieldSpec("foerderbetrag", "Förderbetrag lt. Bescheid (€)", placeholder="z. B. 45.000,00"),
