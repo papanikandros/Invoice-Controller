@@ -1,8 +1,8 @@
 """vne-generation orchestrator: project folder → classified docs → ratios → invoices → VneResult.
 
-Ratio source priority (see vne/ratios.py): the verified cost-estimation `Kostenaufstellung.ods`
-first, a consultant-built Kostenaufstellung PDF second, live cost-estimation offer extraction
-last (the only tier that costs offer-side LLM calls). Invoice extraction always
+Ratio source (see vne/ratios.py): the consultant's verified Kostenaufstellung as PDF
+(Phase 2c V1, the only sheet input since 2026-10-04), else live cost-estimation offer
+extraction (the only tier that costs offer-side LLM calls). Invoice extraction always
 runs per invoice-classified PDF; `other` documents are carried through by name so
 the renderer and CLI can report them — classified and visible, never silently
 dropped.
@@ -24,14 +24,13 @@ from invoice_controller.models import InvoiceDocument
 from invoice_controller.vne.abgleich import (
     SKIPPED_NO_POSITIONS,
     AbgleichResult,
-    blocks_from_kostenaufstellung_ods,
     blocks_from_kostenaufstellung_pdf,
-    blocks_from_kostenaufstellung_xlsx,
     blocks_from_offer_documents,
     build_abgleich,
 )
 from invoice_controller.vne.compute import VneResult, compute_vne
 from invoice_controller.vne.ratios import from_offer_documents, load_vendor_ratios
+from invoice_controller.vne.rename import plan_renames
 
 
 def build_vne_tabelle(
@@ -55,8 +54,8 @@ def build_vne_tabelle(
 
     ratios, ratio_source = load_vendor_ratios(project_dir)
     ratio_path = project_dir / ratio_source.split(":", 1)[1] if ":" in ratio_source else None
-    # Uploads that are neither classified (PDF/image) nor the Kostenaufstellung in use
-    # — e.g. a misnamed .ods — are listed, never silently dropped (EK4_333 run 4).
+    # Uploads that are neither classified (PDF/image) nor the Kostenaufstellung PDF in
+    # use — e.g. an .xlsx/.ods, which is no input any more — are listed, never dropped.
     classified_paths = {c.path for c in classified}
     ignored += sorted(
         p for p in project_dir.rglob("*")
@@ -90,14 +89,20 @@ def build_vne_tabelle(
     )
     result.ratio_path = ratio_path
 
+    # V6: every invoice gets its canonical name right after extraction; the Beleg
+    # column and the ZIP download use it (the files themselves are copied by the caller).
+    result.renames = plan_renames(
+        [r.invoice for r in result.invoices],
+        unusable={r.invoice.source_path for r in result.invoices if r.unusable},
+    )
+    by_path = {r.original: r.new_name for r in result.renames}
+    for row in result.invoices:
+        row.beleg_name = by_path.get(row.invoice.source_path, row.invoice.source_path.name)
+
     # Positionsabgleich: reuses what this run already has — no second extraction.
     # The offer side follows the ratio source, so both rest on the same document.
     if offers:
         blocks, offer_source = blocks_from_offer_documents(offers), "Live-Extraktion der Angebote"
-    elif ratio_source.startswith("xlsx:") and ratio_path is not None:
-        blocks, offer_source = blocks_from_kostenaufstellung_xlsx(ratio_path), ratio_path.name
-    elif ratio_source.startswith("ods:") and ratio_path is not None:
-        blocks, offer_source = blocks_from_kostenaufstellung_ods(ratio_path), ratio_path.name
     elif ratio_source.startswith("pdf:") and ratio_path is not None:
         blocks, offer_source = blocks_from_kostenaufstellung_pdf(ratio_path), ratio_path.name
     else:

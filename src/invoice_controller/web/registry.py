@@ -170,11 +170,26 @@ def vne_config_from_params(params: dict[str, str]) -> tuple["object", list[str]]
     else:
         flags.append("Bescheid-Werte nicht angegeben — Förderbetrag-Block bleibt leer")
 
+    antragstellung = de_date("antragstellung", "Antragstellung")
+    bescheid_datiert = de_date("bescheid_datiert", "Zuwendungsbescheid datiert")
+    if antragstellung is None:
+        flags.append("Antragstellung nicht angegeben — Prüfung 'Auftrag erteilt ≥ Antragstellung' entfällt")
+    if bescheid_datiert is None:
+        flags.append("Zuwendungsbescheid-Datum nicht angegeben — Prüfung 'Rechnungsdatum ≥ Bescheid' entfällt")
+
     return ProjektConfig(
         client=client,
         bewilligungszeitraum_start=start,
         bewilligungszeitraum_end=end,
         bescheid=bescheid,
+        antragstellung=antragstellung,
+        aavm_genehmigung=de_date("aavm_genehmigung", "AavM-Genehmigung"),
+        bescheid_eingegangen=de_date("bescheid_eingegangen", "Zuwendungsbescheid eingegangen"),
+        bescheid_datiert=bescheid_datiert,
+        kennung=txt("kennung"),
+        passwort=txt("passwort"),
+        iban=txt("iban"),
+        steuernummer=txt("steuernummer"),
     ), flags
 
 
@@ -203,6 +218,15 @@ def merge_bescheid_into_config(config, meta) -> list[str]:
     if config.bescheid.kostendeckel_foerderanteil is None and meta.foerderanteil_pct is not None:
         config.bescheid.kostendeckel_foerderanteil = meta.foerderanteil_pct / 100
         adopted.append(f"Förderanteil {format_de_decimal(meta.foerderanteil_pct)} %")
+    if config.bescheid_datiert is None and meta.bescheid_datum:
+        config.bescheid_datiert = meta.bescheid_datum
+        adopted.append(f"Bescheid datiert {meta.bescheid_datum:%d.%m.%Y}")
+    if config.antragstellung is None and meta.antrag_datum:
+        config.antragstellung = meta.antrag_datum
+        adopted.append(f"Antragstellung {meta.antrag_datum:%d.%m.%Y}")
+    if config.kennung is None and meta.kennung:
+        config.kennung = meta.kennung
+        adopted.append(f"Kennung {meta.kennung}")
     return adopted
 
 
@@ -241,6 +265,8 @@ def _config_with_bescheid(job: Job, params: dict[str, str]):
             f for f in config_flags
             if not (("Zeitraum" in f and config.has_window)
                     or ("Adressprüfung" in f and config.client is not None)
+                    or ("Antragstellung nicht" in f and config.antragstellung is not None)
+                    or ("Bescheid-Datum nicht" in f and config.bescheid_datiert is not None)
                     or ("Förderbetrag-Block" in f and config.bescheid is not None
                         and config.bescheid.foerderbetrag is not None))
         ]
@@ -279,8 +305,8 @@ class VneGeneration(Procedure):
         for path in result.ignored:
             if path.suffix.lower() in (".xlsx", ".ods"):
                 job.file_status(path.name, "hinweis",
-                                "nicht als Kostenaufstellung erkannt (Name muss 'Kostenaufstellung' enthalten, "
-                                "Blöcke mit SOLL-Kopfzeile) — ignoriert")
+                                "Tabellen werden nicht mehr gelesen — die geprüfte Kostenaufstellung "
+                                "bitte als PDF hochladen (ignoriert)")
             elif path.suffix.lower() not in (".pdf", ".png", ".jpg", ".jpeg"):
                 job.file_status(path.name, "hinweis", "kein PDF/Bild — ignoriert")
             else:
@@ -305,6 +331,14 @@ class VneGeneration(Procedure):
         out = job.run_dir / f"VNE-Tabelle_{_projekt(params)}.xlsx"
         write_vne_tabelle(result, config, out)
         job.add_output(out)
+        if result.renames:
+            from invoice_controller.vne.rename import write_renamed
+
+            job.add_output(write_renamed(result.renames, job.run_dir / "renamed"))
+            unclear = [r for r in result.renames if "UNKLAR" in r.new_name]
+            if unclear:
+                job.add_flag(f"{len(unclear)} umbenannte Datei(en) mit UNKLAR im Namen — in Umbenennung.csv prüfen: "
+                             + ", ".join(r.original.name for r in unclear[:6]))
 
 
 # --- beg vne-generation -----------------------------------------------------------------
@@ -431,18 +465,27 @@ PROCEDURES: tuple[Procedure, ...] = (
     VneGeneration(
         key="eew-vne-generation",
         label="EEW VNE-Tabelle (vne-generation)",
-        upload_hint="Alle Rechnungen + Angebote ODER die geprüfte Kostenaufstellung.xlsx; "
+        upload_hint="Alle Rechnungen + die geprüfte Kostenaufstellung als PDF (aus der "
+                    "Kostenaufstellung.xlsx exportiert) ODER die Angebots-PDFs; "
                     "optional den Zuwendungsbescheid (füllt leere Felder unten automatisch)",
-        accept=".pdf,.xlsx,.ods",
+        accept=".pdf",
         fields=(
             PROJEKT_FIELD,
             FieldSpec("kunde_name", "Kunde (Name)", placeholder="z. B. ZePa GmbH"),
             FieldSpec("kunde_adresse", "Kunde (Adresse)", placeholder="Straße Nr., PLZ Ort"),
+            FieldSpec("antragstellung", "Antragstellung (Datum)", placeholder="TT.MM.JJJJ"),
+            FieldSpec("aavm_genehmigung", "AavM-Genehmigung (Datum, falls vorzeitiger Maßnahmenbeginn)", placeholder="TT.MM.JJJJ"),
+            FieldSpec("bescheid_eingegangen", "Zuwendungsbescheid eingegangen am", placeholder="TT.MM.JJJJ"),
+            FieldSpec("bescheid_datiert", "Zuwendungsbescheid datiert", placeholder="TT.MM.JJJJ"),
             FieldSpec("zeitraum_von", "Bewilligungszeitraum von", placeholder="TT.MM.JJJJ"),
             FieldSpec("zeitraum_bis", "Bewilligungszeitraum bis", placeholder="TT.MM.JJJJ"),
             FieldSpec("foerderbetrag", "Förderbetrag lt. Bescheid (€)", placeholder="z. B. 45.000,00"),
             FieldSpec("foerderanteil", "Kostendeckel-Förderanteil (%)", placeholder="z. B. 40"),
             FieldSpec("agvo", "AGVO-Referenzkosten (€)", placeholder="optional"),
+            FieldSpec("kennung", "Kennung / Vorgangsnummer", placeholder="z. B. 7176000"),
+            FieldSpec("passwort", "Passwort (BAFA-Portal)", placeholder="optional"),
+            FieldSpec("iban", "IBAN", placeholder="optional"),
+            FieldSpec("steuernummer", "Steuernummer", placeholder="optional"),
         ),
         with_zahlungsnachweise=False,
     ),

@@ -32,12 +32,14 @@ from invoice_controller.template.xlsx import write_kostenaufstellung
 from invoice_controller.vne.abgleich import (
     SKIPPED_NO_POSITIONS,
     AbgleichResult,
-    blocks_from_kostenaufstellung_xlsx,
+    blocks_from_kostenaufstellung_pdf,
+    blocks_from_layout_text,
     blocks_from_offer_documents,
     build_abgleich,
 )
 from invoice_controller.vne.compute import compute_vne
 from invoice_controller.vne.xlsx import ABGLEICH_SHEET_NAME, SHEET_NAME, write_vne_tabelle
+from tests.conftest import export_pdf_via_soffice
 
 RED = "00FFCCCC"
 
@@ -216,60 +218,52 @@ class TestRun4Findings:
         assert [g.label for g in result.groups] == ["L&R Kältetechnik"]
 
 
-class TestKostenaufstellungOfferSide:
-    def test_positions_roundtrip_through_the_cost_estimation_xlsx(self, tmp_path: Path) -> None:
-        """The zero-token offer side: what cost-estimation wrote (and the consultant
-        verified) reads back as matchable positions, optional flag included."""
-        path = tmp_path / "Kostenaufstellung.xlsx"
-        write_kostenaufstellung([_lr_offer()], path)
+class TestKostenaufstellungPdfExportOfferSide:
+    def test_positions_roundtrip_through_the_consultants_pdf_export(self, tmp_path: Path) -> None:
+        """Phase 2c V1: the consultant exports the verified Kostenaufstellung.xlsx to PDF and
+        uploads THAT. Our print setup must keep one row per line and the readers must take
+        LibreOffice's locale (en-US desktops write 1,234.56)."""
+        from invoice_controller.vne.ratios import from_kostenaufstellung_pdf
 
-        [block] = blocks_from_kostenaufstellung_xlsx(path)
-        assert "L&R" in block.label
-        assert [(p.pos, p.line_total_net, p.optional) for p in block.positions] == [
-            ("1", Decimal("42300"), False),
-            ("2", Decimal("3800"), False),
-            ("3", Decimal("1500"), True),
+        xlsx = tmp_path / "Kostenaufstellung.xlsx"
+        write_kostenaufstellung([_lr_offer()], xlsx)
+        pdf = export_pdf_via_soffice(xlsx)
+
+        [ratio] = from_kostenaufstellung_pdf(pdf)
+        assert ratio.gesamt == Decimal("47600.00")                      # the sheet's Σ row (incl. optional), not "47,60"
+        [block] = blocks_from_kostenaufstellung_pdf(pdf)
+        assert [(p.pos, p.line_total_net) for p in block.positions][:2] == [
+            ("1", Decimal("42300.00")), ("2", Decimal("3800.00")),
         ]
-
         [group] = build_abgleich([block], _lr_invoices(), with_llm=False).groups
         assert {r.offer_position.pos: r.variance for r in group.rows if r.matched} == {
-            "1": Decimal(0), "2": Decimal("200"),
+            "1": Decimal(0), "2": Decimal("200.00"),
         }
 
-
-class TestKostenaufstellungOdsAndSubtotals:
-    def test_positions_roundtrip_through_the_legacy_ods(self, tmp_path: Path) -> None:
-        """EK4_333 run 4: the colleague uploaded the Kostenaufstellung as .ods (LibreOffice)."""
-        from invoice_controller.template.ods import write_kostenaufstellung as write_ods
-        from invoice_controller.vne.abgleich import blocks_from_kostenaufstellung_ods
-
-        path = tmp_path / "Kostenaufstellung, Test.ods"
-        write_ods([_lr_offer()], path)
-        [block] = blocks_from_kostenaufstellung_ods(path)
-        assert [(p.pos, p.line_total_net, p.optional) for p in block.positions] == [
-            ("1", Decimal("42300"), False), ("2", Decimal("3800"), False), ("3", Decimal("1500"), True),
-        ]
-
-    def test_subtotal_row_does_not_end_the_block(self, tmp_path: Path) -> None:
-        """The consultant's sheets carry a mid-block "Σ 1…11" subtotal before the
-        remaining positions — the reader stopped there (3 of 8 positions, 2026-09-29)."""
-        import openpyxl
-
-        wb = openpyxl.Workbook(); ws = wb.active
-        rows = [
-            ("SOLL Muster Angebot A-1 vom 01.01.2026", None, None, None, None),
-            ("Position", "Beschreibung", "Gesamtkosten", "Investitionskosten", "Nebenkosten"),
-            ("1", "Maschine", 1000, 1000, 0),
-            ("Σ 1…1", "Gesamtpreis Pos. 1 – 1", 1000, 1000, 0),
-            ("2", "Filter", 200, 200, 0),
-            ("Σ 1…2", "Gesamtpreis Pos. 1 – 2", 1200, 1200, 0),
-            (None, None, 1, 1, 0),
-        ]
-        for r in rows:
-            ws.append(r)
-        wb.save(tmp_path / "Kostenaufstellung.xlsx")
-        [block] = blocks_from_kostenaufstellung_xlsx(tmp_path / "Kostenaufstellung.xlsx")
+    def test_subtotal_row_does_not_end_the_block(self) -> None:
+        """The consultant's sheets carry a mid-block "Σ 1…11" subtotal before the remaining
+        positions — the reader stopped there once (3 of 8 positions, 2026-09-29)."""
+        text = (
+            "SOLL Muster Angebot A-1 vom 01.01.2026, Anlage\n"
+            "Position   Beschreibung   Gesamtkosten   Investitionskosten   Nebenkosten\n"
+            "  1        Maschine                1.000,00 €   1.000,00 €   0,00 €\n"
+            "Σ 1…1     Gesamtpreis Pos. 1 – 1   1.000,00 €   1.000,00 €   0,00 €\n"
+            "  2        Filter                    200,00 €     200,00 €   0,00 €\n"
+            "Σ 1…2     Gesamtpreis Pos. 1 – 2   1.200,00 €   1.200,00 €   0,00 €\n"
+            "                                    100,00 %     100,00 %   0,00 %\n"
+        )
+        [block] = blocks_from_layout_text(text)
         assert [p.pos for p in block.positions] == ["1", "2"]
+
+    def test_en_us_locale_tokens_parse(self) -> None:
+        text = (
+            "SOLL Muster Angebot A-1 vom 01.01.2026, Anlage\n"
+            "Position   Beschreibung   Gesamtkosten   Investitionskosten   Nebenkosten\n"
+            "  1        Maschine              108,640.00 €   18,759.80 €   89,880.20 €\n"
+            "Σ 1…1     Gesamtpreis Pos. 1 – 1 108,640.00 €   18,759.80 €   89,880.20 €\n"
+        )
+        [block] = blocks_from_layout_text(text)
+        assert block.positions[0].line_total_net == Decimal("108640.00")
 
 
 class TestKostenaufstellungPdfOfferSide:
@@ -389,14 +383,16 @@ class TestFoldingAcrossVendorSpellings:
 
 
 class TestOrchestratorWiring:
-    def test_kostenaufstellung_xlsx_feeds_both_ratios_and_abgleich(self, tmp_path: Path, monkeypatch) -> None:
-        """The zero-token path end to end: no offer is extracted, the verified
-        Kostenaufstellung.xlsx serves the ratios AND the offer positions; the
+    def test_kostenaufstellung_pdf_feeds_both_ratios_and_abgleich(self, tmp_path: Path, monkeypatch) -> None:
+        """The zero-token path end to end: no offer is extracted, the consultant's
+        Kostenaufstellung PDF serves the ratios AND the offer positions; the
         consultant's own invoice stays out of the vendor scope check."""
         from invoice_controller.extract import vne as orchestrator
         from invoice_controller.extract.classify import Classified, DocClass
 
         write_kostenaufstellung([_lr_offer()], tmp_path / "Kostenaufstellung.xlsx")
+        export_pdf_via_soffice(tmp_path / "Kostenaufstellung.xlsx")
+        (tmp_path / "Kostenaufstellung.xlsx").unlink()
         own = _invoice("EnergieKonzept Krause", "EK-1", [_ipos("Einsparkonzept", "10000.00")])
         by_name = {"R-1.pdf": _lr_invoices()[0], "EK-1.pdf": own}
 
@@ -409,14 +405,14 @@ class TestOrchestratorWiring:
 
         result = orchestrator.build_vne_tabelle(tmp_path, ProjektConfig(), with_llm_match=False)
 
-        assert result.ratio_source == "xlsx:Kostenaufstellung.xlsx"
+        assert result.ratio_source == "pdf:Kostenaufstellung.pdf"
         abgleich = result.abgleich
         assert abgleich is not None and abgleich.skipped_reason is None
-        assert abgleich.offer_source == "Kostenaufstellung.xlsx"
+        assert abgleich.offer_source == "Kostenaufstellung.pdf"
         [group] = abgleich.groups
         assert (group.drifted, len(group.extras)) == (1, 1)
         assert abgleich.offerless_invoices == []            # own-company invoice excluded, not "offerless"
-        assert result.ratio_path == tmp_path / "Kostenaufstellung.xlsx"
+        assert result.ratio_path == tmp_path / "Kostenaufstellung.pdf"
 
     def test_unused_uploads_are_listed_not_dropped(self, tmp_path: Path, monkeypatch) -> None:
         """EK4_333 run 4: a misnamed .ods vanished without a trace."""

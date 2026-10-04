@@ -6,9 +6,9 @@ silently. This check matches invoice positions to offer positions per vendor and
 reports the variance per offer position. It replaced the standalone Kontrollmappe
 procedure (user decision 2026-09-21: one process, no second extraction run).
 
-The offer side costs no extra tokens: it is the positions of the verified
-Kostenaufstellung.xlsx when one is uploaded, else the offers that vne-generation
-extracts live for the ratios anyway. The invoice side is the position-level
+The offer side costs no extra tokens: it is the positions of the consultant's verified
+Kostenaufstellung PDF when one is uploaded (Phase 2c V1: PDF is the only sheet input),
+else the offers that vne-generation extracts live for the ratios anyway. The invoice side is the position-level
 extraction vne-generation already performs.
 
 Decisions carried over from R6: any variance ≠ 0 renders red; bundle rows are single
@@ -39,7 +39,7 @@ from invoice_controller.match.positions import (
 from invoice_controller.match.vendor import _overlap_score, is_own_company, normalize_vendor
 from invoice_controller.models import DocumentKind, InvoiceDocument, OfferDocument, Position
 from invoice_controller.normalize import format_de_decimal
-from invoice_controller.vne.ratios import _BLOCK_HEADER, _STATEMENT_BLOCK_RE, vendor_from_header
+from invoice_controller.vne.ratios import _BLOCK_HEADER, _STATEMENT_BLOCK_RE, parse_money_token, vendor_from_header
 
 ProgressFn = Callable[[str], None]
 
@@ -53,11 +53,11 @@ _DEDUCTION_RE = re.compile(
 )
 
 SKIPPED_NO_POSITIONS = (
-    "Positionsabgleich übersprungen — keine Angebotspositionen lesbar (Kostenaufstellung als "
-    ".xlsx/.ods/PDF hochladen, oder die Angebots-PDFs ohne Kostenaufstellung)"
+    "Positionsabgleich übersprungen — keine Angebotspositionen lesbar (die geprüfte "
+    "Kostenaufstellung als PDF hochladen, oder die Angebots-PDFs ohne Kostenaufstellung)"
 )
 
-_MONEY_EUR = re.compile(r"(-?\d{1,3}(?:\.\d{3})*,\d{2})\s*€")
+_MONEY_EUR = re.compile(r"(?<![\d.,])(-?(?:\d{1,3}(?:\.\d{3})*,\d{2}|\d{1,3}(?:,\d{3})*\.\d{2}))(?![\d.,])\s*€")
 _PDF_POSITION = re.compile(r"^\s{0,4}(\d+(?:[.\-–]\d+)*)\s+(\S.*)$")
 _PDF_SKIP = re.compile(r"^\s*(Position\s+Beschreibung|Σ|Sonderpreis|Nettosumme lt\.|Kostenaufstellung\s*$)|\d+,\d{2}\s*%")
 
@@ -163,96 +163,6 @@ def blocks_from_offer_documents(offers: list[OfferDocument]) -> list[OfferBlock]
     ]
 
 
-def blocks_from_kostenaufstellung_xlsx(path: Path) -> list[OfferBlock]:
-    """Position rows of the cost-estimation output, as the consultant verified them.
-    Mirrors the block walk of `ratios.from_kostenaufstellung_xlsx`; the sheet carries
-    no quantity/article columns, so matching leans on description + price."""
-    import openpyxl
-
-    ws = openpyxl.load_workbook(path, data_only=True).worksheets[0]
-
-    def _dec(v) -> Decimal | None:
-        if v is None or isinstance(v, str):
-            return None
-        try:
-            return Decimal(str(v))
-        except Exception:
-            return None
-
-    blocks: list[OfferBlock] = []
-    current: OfferBlock | None = None
-    in_positions = False
-    for row in ws.iter_rows(min_col=1, max_col=6):
-        a, b = row[0].value, row[1].value
-        first = str(a).strip() if a is not None else ""
-        if first.startswith("SOLL"):
-            current, in_positions = None, False
-            if not _STATEMENT_BLOCK_RE.search(first):
-                current = OfferBlock(label=vendor_from_header(first), positions=[])
-                blocks.append(current)
-                in_positions = True
-            continue
-        if current is None:
-            continue
-        if first.startswith("Σ"):
-            continue          # a subtotal ("Σ 1…11") sits mid-block; positions continue below it
-        if isinstance(b, str) and b.startswith("Sonderpreis"):
-            current.sonderpreis = _dec(row[2].value)
-            continue
-        if not in_positions or not first or first == "Position" or not isinstance(b, str):
-            continue
-        total = _dec(row[2].value)
-        # The writer suffixes "(optional)" unless the wording already says so.
-        optional = "option" in b.lower()
-        if total is None and not optional:
-            continue
-        current.positions.append(Position(pos=first, description=b, line_total_net=total, optional=optional))
-    return [blk for blk in blocks if blk.positions]
-
-
-def blocks_from_kostenaufstellung_ods(path: Path) -> list[OfferBlock]:
-    """The legacy `.ods` cost-estimation output (or a consultant copy of it) — the
-    colleagues work in LibreOffice, so this is what they upload (EK4_333 run 4)."""
-    import zipfile
-    from xml.etree import ElementTree as ET
-
-    from invoice_controller.vne.ratios import _NS_T, _cell_texts_and_values
-
-    with zipfile.ZipFile(path) as z:
-        root = ET.fromstring(z.read("content.xml"))
-    tables = list(root.iter(_NS_T + "table"))
-    blocks: list[OfferBlock] = []
-    current: OfferBlock | None = None
-    in_positions = False
-    for table in tables[:1]:
-        for row_elem in table.iter(_NS_T + "table-row"):
-            texts, values = _cell_texts_and_values(row_elem)
-            first = texts[0].strip() if texts else ""
-            if first.startswith("SOLL"):
-                current, in_positions = None, False
-                if not _STATEMENT_BLOCK_RE.search(first):
-                    current = OfferBlock(label=vendor_from_header(first), positions=[])
-                    blocks.append(current)
-                    in_positions = True
-                continue
-            if current is None:
-                continue
-            if first.startswith("Σ"):
-                continue      # subtotal rows sit mid-block; positions continue below
-            desc = texts[1].strip() if len(texts) > 1 else ""
-            if desc.startswith("Sonderpreis"):
-                current.sonderpreis = values[2] if len(values) > 2 else None
-                continue
-            if not in_positions or not first or first == "Position" or not desc:
-                continue
-            total = values[2] if len(values) > 2 else None
-            optional = "option" in desc.lower()
-            if total is None and not optional:
-                continue
-            current.positions.append(Position(pos=first, description=desc, line_total_net=total, optional=optional))
-    return [blk for blk in blocks if blk.positions]
-
-
 def blocks_from_kostenaufstellung_pdf(path: Path) -> list[OfferBlock]:
     """The consultant-built Kostenaufstellung PDF (EK4_333's workflow, 2026-09-24):
     the same document that already serves the ratios carries every position row."""
@@ -300,7 +210,7 @@ def blocks_from_layout_text(text: str) -> list[OfferBlock]:
         monies = _MONEY_EUR.findall(line)
         if m_pos and len(monies) >= 3:
             desc = _MONEY_EUR.split(m_pos.group(2))[0].strip()
-            pos = Position(pos=m_pos.group(1), description=desc, line_total_net=Decimal(monies[0].replace(".", "").replace(",", ".")),
+            pos = Position(pos=m_pos.group(1), description=desc, line_total_net=parse_money_token(monies[0]),
                            optional="option" in desc.lower())
             flush_prefix_into(pos)
             current.positions.append(pos)

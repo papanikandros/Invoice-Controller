@@ -34,8 +34,14 @@ _NS_P = "{urn:oasis:names:tc:opendocument:xmlns:text:1.0}"
 _NS_O = "{urn:oasis:names:tc:opendocument:xmlns:office:1.0}"
 
 # German money / percent tokens as printed in the consultant PDFs.
-_MONEY = re.compile(r"-?\d{1,3}(?:\.\d{3})*,\d{2}")
-_PCT = re.compile(r"-?\d{1,3}(?:\.\d{3})*,\d{2}\s*%")
+# German "1.234,56" OR en-US "1,234.56": a LibreOffice on an English desktop exports the
+# consultant's Kostenaufstellung.xlsx with en-US grouping (seen 2026-10-03), and the
+# consultant's PDF export is the VNE input since Phase 2c. Two decimals make both forms
+# unambiguous per token.
+# The lookarounds stop "108,640.00" from matching as the German "108,64".
+_NUM = r"-?(?:\d{1,3}(?:\.\d{3})*,\d{2}|\d{1,3}(?:,\d{3})*\.\d{2})"
+_MONEY = re.compile(rf"(?<![\d.,]){_NUM}(?![\d.,])")
+_PCT = re.compile(rf"(?<![\d.,]){_NUM}(?![\d.,])\s*%")
 _BLOCK_HEADER = re.compile(
     r"(\b(SOLL|NEU)\b.*(Angebot|vom|Sch[äa]tzung|Nebenkosten|Nebenosten))"
     r"|(Sch[äa]tzung|Stellungnahme)",
@@ -47,12 +53,21 @@ _SUM_LINE = re.compile(
 _SONDER = re.compile(r"Sonderpreis|Sonderkonditionen|Pauschalpreis", re.IGNORECASE)
 
 
+def parse_money_token(tok: str) -> Decimal:
+    """'1.234,56' (de) or '1,234.56' (en-US) → Decimal('1234.56'); the decimal separator
+    is whichever of ',' / '.' comes last."""
+    tok = tok.replace("%", "").replace("€", "").strip()
+    if tok.rfind(",") > tok.rfind("."):
+        return Decimal(tok.replace(".", "").replace(",", "."))
+    return Decimal(tok.replace(",", ""))
+
+
 def _de_money(tok: str) -> Decimal:
-    return Decimal(tok.replace(".", "").replace(",", "."))
+    return parse_money_token(tok)
 
 
 def _de_pct(tok: str) -> Decimal:
-    return Decimal(tok.replace("%", "").strip().replace(".", "").replace(",", "."))
+    return parse_money_token(tok)
 
 
 @dataclass
@@ -414,21 +429,6 @@ def is_statement_block(ratio: VendorRatio) -> bool:
     return ratio.statement or bool(_STATEMENT_BLOCK_RE.search(ratio.header))
 
 
-def find_kostenaufstellung_sheet(project_dir: Path) -> Path | None:
-    """The consultant's `.xlsx`/`.ods` Kostenaufstellung by name PATTERN: colleagues
-    upload "Kostenaufstellung, MKT.ods" (EK4_333 run 4, 2026-09-24), which the exact
-    name lookup silently skipped. The exact name still wins when several match."""
-    candidates = [
-        p for p in project_dir.iterdir()
-        if p.is_file() and p.suffix.lower() in (".xlsx", ".ods")
-        and "kostenaufstellung" in p.name.lower()
-        and not p.name.startswith((".", "~"))
-    ]
-    candidates.sort(key=lambda p: (p.name.lower() not in ("kostenaufstellung.xlsx", "kostenaufstellung.ods"),
-                                   p.suffix.lower() != ".xlsx", p.name.lower()))
-    return candidates[0] if candidates else None
-
-
 def find_kostenaufstellung_pdf(project_dir: Path) -> Path | None:
     """The cost-estimation-format PDF is the one carrying the IK/NK percentage split rows;
     raw vendor offers with 'Kostenaufstellung' in the name lack them."""
@@ -444,20 +444,12 @@ def find_kostenaufstellung_pdf(project_dir: Path) -> Path | None:
 
 
 def load_vendor_ratios(project_dir: Path) -> tuple[list[VendorRatio], str]:
-    """Resolve the best available ratio source for a project folder. Returns
-    (ratios, source description). Empty list when neither a Kostenaufstellung
-    (.xlsx/.ods) nor an cost-estimation-format PDF exists — the caller then runs live cost-estimation
-    extraction or red-flags everything. The .xlsx (current cost-estimation output format) is
-    preferred; the .ods tier remains for projects generated before 2026-08-28."""
-    sheet = find_kostenaufstellung_sheet(project_dir)
-    if sheet is not None:
-        reader = from_kostenaufstellung_xlsx if sheet.suffix.lower() == ".xlsx" else from_kostenaufstellung_ods
-        try:
-            ratios = reader(sheet)
-        except Exception:  # noqa: BLE001 — an unreadable sheet falls through to the next tier
-            ratios = []
-        if ratios:
-            return ratios, f"{sheet.suffix.lower()[1:]}:{sheet.name}"
+    """Resolve the ratio source for a project folder: (ratios, source description).
+    Empty list when no Kostenaufstellung PDF in cost-estimation format exists — the
+    caller then runs live offer extraction or red-flags everything."""
+    # Phase 2c V1 (consultant decision 2026-10-04): the Kostenaufstellung reaches
+    # vne-generation ONLY as the PDF the consultant exports after verifying the xlsx.
+    # The .xlsx/.ods readers above stay for the writers' own regression tests.
     pdf = find_kostenaufstellung_pdf(project_dir)
     if pdf is not None:
         ratios = from_kostenaufstellung_pdf(pdf)

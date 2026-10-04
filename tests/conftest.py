@@ -139,3 +139,44 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     for item in items:
         if "live" in item.keywords:
             item.add_marker(skip_live)
+
+
+def export_pdf_via_soffice(xlsx: "Path", out_dir: "Path | None" = None) -> "Path":
+    """The consultant's own flow (Phase 2c V1): the Kostenaufstellung.xlsx exported to PDF
+    by LibreOffice. Skips the test when no soffice is installed (CI)."""
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    import pytest
+
+    soffice = shutil.which("soffice") or shutil.which("libreoffice")
+    if soffice is None:
+        pytest.skip("LibreOffice (soffice) not installed")
+    out_dir = out_dir or xlsx.parent
+    subprocess.run([soffice, "--headless", "--convert-to", "pdf", "--outdir", str(out_dir), str(xlsx)],
+                   check=True, capture_output=True, timeout=240)
+    pdf = out_dir / (xlsx.stem + ".pdf")
+    assert pdf.exists()
+    return pdf
+
+
+def recalc_via_soffice(xlsx: "Path") -> "Path":
+    """openpyxl writes formulas without cached results; LibreOffice computes them on
+    load. Returns the recalculated copy (data_only readers then see the values)."""
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    import pytest
+
+    soffice = shutil.which("soffice") or shutil.which("libreoffice")
+    if soffice is None:
+        pytest.skip("LibreOffice (soffice) not installed")
+    out_dir = xlsx.parent / "recalc"
+    out_dir.mkdir(exist_ok=True)
+    subprocess.run([soffice, "--headless", "--convert-to", "xlsx", "--outdir", str(out_dir), str(xlsx)],
+                   check=True, capture_output=True, timeout=240)
+    out = out_dir / xlsx.name
+    assert out.exists()
+    return out

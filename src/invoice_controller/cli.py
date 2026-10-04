@@ -251,6 +251,11 @@ def vne_generation(
         output = project_dir / "VNE-Tabelle.xlsx"
     write_vne_tabelle(result, config, output)
     console.print(f"\n[bold green]→ Wrote[/bold green] {output}")
+    if result.renames:
+        from invoice_controller.vne.rename import write_renamed
+
+        zip_path = write_renamed(result.renames, output.parent / "renamed")
+        console.print(f"[bold green]→ Rechnungen umbenannt:[/bold green] {zip_path}")
 
 
 def location_description(

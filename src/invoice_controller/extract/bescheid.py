@@ -50,6 +50,17 @@ class EewBescheidMeta(BaseModel):
     foerderanteil_pct: Decimal | None = Field(
         default=None, description="Förderquote / Mehrkosten-Anteil in Prozent, e.g. 40"
     )
+    # Phase 2c V2 (2026-10-04): the dates the fundability checks need, plus the
+    # identifiers the VNE-Maske header carries.
+    bescheid_datum: date | None = Field(default=None, description="Datum des Bescheids (letter date)")
+    antrag_datum: date | None = Field(
+        default=None, description="Datum der Antragstellung as referenced in the letter ('Ihr Antrag vom …')"
+    )
+    kennung: str | None = Field(
+        default=None, description="Vorgangsnummer / Aktenzeichen / Kennung of the application, verbatim"
+    )
+    # IBAN / Steuernummer are deliberately NOT extracted: the IBAN printed on a
+    # Bescheid is BAFA's own Bundesbank account (EK4_333, 2026-10-04), never the client's.
 
 
 SYSTEM_PROMPT = """You extract the approval parameters from ONE German EEW Modul 4 Bewilligungsbescheid / Zuwendungsbescheid (BAFA approval letter). An honest null beats any fabricated value — everything you state is trusted downstream.
@@ -58,6 +69,7 @@ SYSTEM_PROMPT = """You extract the approval parameters from ONE German EEW Modul
 (B2) bewilligungszeitraum_start / _end: the Bewilligungszeitraum (project window — earliest date costs may count, completion deadline). Dates as YYYY-MM-DD.
 (B3) foerderbetrag: the approved Zuwendung/Förderbetrag in EUR. foerderanteil_pct: the Förderquote / Mehrkosten-Anteil in percent (e.g. 40). German numbers: "45.000,00" = 45000.00 — return decimal strings with dot separator.
 (B4) If the document is an Änderungsbescheid, extract ITS (amended) figures — the latest Bescheid is binding.
+(B6) bescheid_datum: the letter's own date ("Eschborn, 26.03.2026"). antrag_datum: the application date the letter refers to ("Ihr Antrag vom 14.04.2025", "Antrag eingegangen am …"). kennung: the Vorgangsnummer / Aktenzeichen / Kennung verbatim (e.g. "EEW-SWG 720002505").
 (B5) Return every schema key explicitly; null for anything the document does not state. Never guess."""
 
 

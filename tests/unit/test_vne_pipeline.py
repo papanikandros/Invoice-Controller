@@ -114,9 +114,9 @@ def test_vendor_match_requires_token_overlap() -> None:
     assert match_vendor("Hofmann Kran-Vermietung", [_ratio("MAFAC"), _ratio("Eggersmann")]) is None
 
 
-def test_kostenaufstellung_sheet_found_by_name_pattern(tmp_path: Path) -> None:
-    """EK4_333 run 4: "Kostenaufstellung, MKT.ods" was silently ignored by the exact-name
-    lookup and the run fell back to live extraction."""
+def test_kostenaufstellung_pdf_found_by_name_pattern_and_sheets_ignored(tmp_path: Path) -> None:
+    """Phase 2c V1: the consultant's PDF export is found whatever it is called, as long as
+    the name says Kostenaufstellung; an .xlsx/.ods beside it is no input any more."""
     from datetime import date
 
     from invoice_controller.models import (
@@ -128,7 +128,8 @@ def test_kostenaufstellung_sheet_found_by_name_pattern(tmp_path: Path) -> None:
         Position,
     )
     from invoice_controller.template.xlsx import write_kostenaufstellung
-    from invoice_controller.vne.ratios import find_kostenaufstellung_sheet, load_vendor_ratios
+    from invoice_controller.vne.ratios import load_vendor_ratios
+    from tests.conftest import export_pdf_via_soffice
 
     offer = OfferDocument(
         source_path=Path("a.pdf"),
@@ -139,10 +140,9 @@ def test_kostenaufstellung_sheet_found_by_name_pattern(tmp_path: Path) -> None:
         kind=DocumentKind.OFFER,
     )
     write_kostenaufstellung([offer], tmp_path / "Kostenaufstellung, MKT.xlsx")
-    (tmp_path / ".~lock.Kostenaufstellung, MKT.xlsx#").write_text("")     # LibreOffice lock file
-    assert find_kostenaufstellung_sheet(tmp_path) == tmp_path / "Kostenaufstellung, MKT.xlsx"
+    export_pdf_via_soffice(tmp_path / "Kostenaufstellung, MKT.xlsx")
     ratios, source = load_vendor_ratios(tmp_path)
-    assert source == "xlsx:Kostenaufstellung, MKT.xlsx" and [r.vendor for r in ratios]
+    assert source == "pdf:Kostenaufstellung, MKT.pdf" and [r.vendor for r in ratios]
 
 
 def test_live_extracted_statement_is_a_statement_block() -> None:
@@ -371,16 +371,17 @@ def test_compute_foerderbetrag_chain() -> None:
 
 def test_xlsx_roundtrip_parseable_by_corpus_reader(tmp_path: Path) -> None:
     ratios = [_ratio("MAFAC", "0.9489", "0.0511")]
-    invoices = [
-        _invoice("MAFAC GmbH", "10000.00", number="R1"),
-        _invoice("ENERGIEKONZEPT Krause GmbH", "3750.00", number="RE-1"),
-        _invoice("Hofmann Kran", "500.00", number="X9"),  # red-flag row
+    invoices = [   # consultant sheets always carry the brutto; the reader keys on it
+        _invoice("MAFAC GmbH", "10000.00", number="R1", brutto=Decimal("11900.00"), mwst_pct=Decimal("19")),
+        _invoice("ENERGIEKONZEPT Krause GmbH", "3750.00", number="RE-1", brutto=Decimal("4462.50"), mwst_pct=Decimal("19")),
+        _invoice("Hofmann Kran", "500.00", number="X9", brutto=Decimal("595.00"), mwst_pct=Decimal("19")),  # red-flag row
     ]
     result = compute_vne(invoices, ratios, ProjektConfig())
     out = tmp_path / "VNE-Tabelle.xlsx"
     write_vne_tabelle(result, ProjektConfig(), out)
 
-    parsed = parse_vne_tabelle(out)
+    from tests.conftest import recalc_via_soffice
+    parsed = parse_vne_tabelle(recalc_via_soffice(out))      # formulas → values (Phase 2c V3)
     assert len(parsed.invoices) == 3
     assert abs(parsed.sum_ik - result.sum_ik) < Decimal("0.01")
     assert abs(parsed.sum_nk - result.sum_nk) < Decimal("0.01")
@@ -613,3 +614,176 @@ class TestScanDuplicates:
         ])
         assert not rows["A2.pdf"].unusable
         assert any("Duplikat?" in f for f in rows["A2.pdf"].flags)
+
+
+def test_date_rules_flag_as_not_fundable() -> None:
+    """Phase 2c V2: a wrong early date voids the funding — the flag must be unmissable
+    and mirror the sheet formula exactly."""
+    from datetime import date
+
+    from invoice_controller.models import AmountCheck
+
+    cfg = ProjektConfig(antragstellung=date(2025, 4, 14), bescheid_datiert=date(2025, 6, 18))
+    def inv(name, order, issued):
+        return InvoiceDocument(source_path=Path(name), vendor_name="Bau GmbH", invoice_number=name,
+                               invoice_date=issued, order_date=order, netto=Decimal("100"),
+                               amount_check=AmountCheck(passed=True))
+    rows = {r.invoice.source_path.name: r for r in compute_vne([
+        inv("ok", date(2025, 4, 14), date(2025, 6, 18)),
+        inv("early-order", date(2025, 4, 13), date(2025, 7, 1)),
+        inv("early-invoice", None, date(2025, 6, 17)),
+    ], [], cfg).invoices}
+    assert rows["ok"].auftrag_ok is True and rows["ok"].rechnung_ok is True
+    assert rows["early-order"].auftrag_ok is False and any("NICHT FÖRDERFÄHIG: Auftrag" in f for f in rows["early-order"].flags)
+    assert rows["early-invoice"].auftrag_ok is None                   # no order date → not evaluable, not red
+    assert rows["early-invoice"].rechnung_ok is False and any("NICHT FÖRDERFÄHIG: Rechnungsdatum" in f for f in rows["early-invoice"].flags)
+    # a failed row contributes nothing to the sums — exactly like the sheet's J formula
+    assert rows["early-order"].splits == [] and rows["early-invoice"].splits == []
+
+
+class TestRename:
+    """Phase 2c V6: `<Rechnungsgeber>_<Rechnungsnummer>_<YYYY-MM-DD>.pdf`, always."""
+
+    @staticmethod
+    def _inv(name, vendor, number, d, netto="100", from_filename=False):
+        from invoice_controller.models import AmountCheck
+
+        return InvoiceDocument(source_path=Path(name), vendor_name=vendor, invoice_number=number,
+                               invoice_date=d, netto=Decimal(netto), amount_check=AmountCheck(passed=True),
+                               vendor_from_filename=from_filename)
+
+    def test_names_from_the_ek4_333_cases(self) -> None:
+        from datetime import date
+
+        from invoice_controller.vne.rename import target_name
+
+        assert target_name(self._inv("x.pdf", "L & R Kältetechnik GmbH & Co.KG", "RG0018867", date(2026, 7, 21))) \
+            == "L&R Kältetechnik_RG0018867_2026-07-21.pdf"
+        assert target_name(self._inv("x.PDF", "Franz Kempmann Transport GmbH", "07 / 058", date(2026, 7, 23))) \
+            == "Franz Kempmann Transport_07-058_2026-07-23.pdf"
+        assert target_name(self._inv("t.pdf", "Torsten Schmidt Garten & Landschaftsbau", "RE20262046", date(2026, 8, 16))) \
+            == "Torsten Schmidt Garten & Landschaftsbau_RE20262046_2026-08-16.pdf"
+        garbage = self._inv("doc0239.pdf", "Rudi Sönnecken - Valbert", "020", date(2020, 1, 1))
+        assert target_name(garbage) == "Rudi Sönnecken - Valbert_020_UNKLAR.pdf"
+        assert target_name(self._inv("y.pdf", "Bau GmbH", "", date(2026, 1, 1))) == "Bau_UNKLAR_2026-01-01.pdf"
+        assert target_name(self._inv("z.pdf", "LR Kältetechnik GmbH", "ROCTUEEE", date(2026, 1, 1), netto="0"), unusable=True) \
+            == "UNKLAR_UNKLAR_UNKLAR.pdf"
+
+    def test_collisions_and_zip(self, tmp_path: Path) -> None:
+        from datetime import date
+
+        from invoice_controller.vne.rename import plan_renames, write_renamed
+        import zipfile
+
+        a = tmp_path / "RG705110.pdf"; a.write_bytes(b"a")
+        b = tmp_path / "Rudi Soennecken - RG.Nr.705110.pdf"; b.write_bytes(b"b")
+        invs = [self._inv(str(a), "Rudi Sönnecken", "705110", date(2026, 7, 23)),
+                self._inv(str(b), "Rudi Sönnecken - Valbert", "705110", date(2026, 7, 23))]
+        renames = plan_renames(invs)
+        assert renames[0].new_name == "Rudi Sönnecken_705110_2026-07-23.pdf"
+        assert renames[1].new_name == "Rudi Sönnecken - Valbert_705110_2026-07-23.pdf"
+        zip_path = write_renamed(renames, tmp_path / "renamed")
+        names = sorted(zipfile.ZipFile(zip_path).namelist())
+        assert names == sorted([renames[0].new_name, renames[1].new_name, "Umbenennung.csv"])
+        assert (tmp_path / "renamed" / "Umbenennung.csv").read_text(encoding="utf-8-sig").startswith("alter Name;neuer Name;Hinweis")
+
+    def test_same_target_gets_a_suffix(self) -> None:
+        from datetime import date
+
+        from invoice_controller.vne.rename import plan_renames
+
+        invs = [self._inv("a.pdf", "Bau GmbH", "R-1", date(2026, 1, 1)), self._inv("b.pdf", "Bau GmbH", "R-1", date(2026, 1, 1))]
+        r = plan_renames(invs)
+        assert r[1].new_name == "Bau_R-1_2026-01-01_2.pdf" and "Duplikat?" in r[1].note
+
+
+class TestMaskeFormulasAgreeWithPython:
+    """Phase 2c V2: the F formula, the message row, the conditional format and the
+    Python flag must give the same verdict for every invoice — replayed over the
+    header dates and invoice dates of all ten consultant workbooks (examples/)."""
+
+    @staticmethod
+    def _gt_cases():
+        import glob
+
+        import openpyxl
+
+        from tests.corpus.vne_tabelle import _find_header_row
+
+        cases = []
+        for f in sorted(glob.glob("examples/*/*VNE*.xlsx")):
+            ws = openpyxl.load_workbook(f, data_only=True)["(Vorlage VNE-Maske)"]
+            hdr = _find_header_row(ws)
+            if hdr is None:
+                continue
+            def d(ref):
+                v = ws[ref].value
+                return v.date() if hasattr(v, "date") else None
+            header = {"antragstellung": d("B4"), "aavm": d("E4"), "bescheid": d("B6")}
+            rows = []
+            for r in range(hdr + 1, ws.max_row + 1):
+                a, c, e = ws.cell(r, 1).value, ws.cell(r, 3).value, ws.cell(r, 5).value
+                if isinstance(a, str) and a.strip().startswith(("Wurde durch", "Ergab sich")):
+                    break
+                if isinstance(a, str) and hasattr(e, "date"):
+                    rows.append((a.strip(), c.date() if hasattr(c, "date") else None, e.date()))
+            if rows:
+                cases.append((Path(f).parent.name, header, rows))
+        return cases
+
+    def test_replay_all_ground_truth_workbooks(self, tmp_path: Path) -> None:
+        import openpyxl
+
+        from invoice_controller.models import AmountCheck
+        from tests.conftest import recalc_via_soffice
+
+        cases = self._gt_cases()
+        if not cases:
+            import pytest
+            pytest.skip("examples/ corpus not available")
+        checked = 0
+        for project, header, rows in cases:
+            cfg = ProjektConfig(antragstellung=header["antragstellung"], aavm_genehmigung=header["aavm"],
+                                bescheid_datiert=header["bescheid"])
+            invoices = [
+                InvoiceDocument(source_path=Path(f"{i}.pdf"), vendor_name=vendor, invoice_number=str(i),
+                                invoice_date=issued, order_date=ordered, netto=Decimal("100"), brutto=Decimal("119"),
+                                mwst_pct=Decimal("19"), amount_check=AmountCheck(passed=True))
+                for i, (vendor, ordered, issued) in enumerate(rows)
+            ]
+            result = compute_vne(invoices, [], cfg)
+            out = tmp_path / f"{project}.xlsx"
+            write_vne_tabelle(result, cfg, out)
+            ws = openpyxl.load_workbook(recalc_via_soffice(out), data_only=True)["(Vorlage VNE-Maske)"]
+            for k, row in enumerate(result.invoices):
+                r1 = 11 + 4 * k
+                python_fails = row.auftrag_ok is False or row.rechnung_ok is False
+                assert ws[f"F{r1}"].value == ("NEIN!" if python_fails else "ja"), (project, k, ws[f"A{r1}"].value)
+                assert (ws[f"C{r1 + 1}"].value == "Auftrag zu früh!") == (row.auftrag_ok is False)
+                assert (ws[f"E{r1 + 1}"].value == "Rechnung zu früh!") == (row.rechnung_ok is False)
+                assert abs(ws[f"H{r1}"].value - 100.0) < 0.005          # H = G/(1+MwSt) = netto
+                checked += 1
+        assert checked >= 50
+
+    def test_inputs_yellow_formulas_plain_and_red_only_by_rule(self, tmp_path: Path) -> None:
+        import openpyxl
+        from datetime import date
+
+        from invoice_controller.models import AmountCheck
+
+        cfg = ProjektConfig(antragstellung=date(2025, 4, 14), bescheid_datiert=date(2025, 6, 18))
+        inv = InvoiceDocument(source_path=Path("a.pdf"), vendor_name="Bau GmbH", invoice_number="R-1",
+                              invoice_date=date(2025, 6, 17), order_date=date(2025, 4, 13), netto=Decimal("100"),
+                              brutto=Decimal("119"), mwst_pct=Decimal("19"), amount_check=AmountCheck(passed=True))
+        out = tmp_path / "v.xlsx"
+        write_vne_tabelle(compute_vne([inv], [], cfg), cfg, out)
+        ws = openpyxl.load_workbook(out)["(Vorlage VNE-Maske)"]
+        yellow = lambda ref: ws[ref].fill.fgColor.rgb.endswith("FFFF99")  # noqa: E731
+        assert all(yellow(ref) for ref in ("B4", "B6", "A11", "C11", "E11", "G11", "W11", "X11", "H12"))
+        assert ws["F11"].value.startswith("=IF(") and not yellow("F11")
+        assert ws["H11"].value == '=IF(G11="",X11,ROUND(G11/(1+W11),2))'
+        assert ws["J12"].value == '=IF(F11="ja",H11-(H11*H12),0)'
+        # no literal red fill anywhere; red comes from conditional formatting on C11/E11/F11
+        assert not any(c.fill.fgColor.rgb.endswith("FF9999") for row in ws.iter_rows() for c in row if c.fill and c.fill.fill_type)
+        ranges = {str(k.sqref) for k in ws.conditional_formatting._cf_rules}
+        assert {"C11", "E11", "F11", "H11", "B4", "B6"} <= ranges

@@ -85,7 +85,23 @@ def write_kostenaufstellung(offers: list[OfferDocument], output_path: Path) -> N
         ws.column_dimensions[get_column_letter(col)].width = width
 
     _append_description_sheet(wb, offers)
+    _print_setup(ws)
     wb.save(output_path)
+
+
+def _print_setup(ws) -> None:
+    """The consultant verifies this workbook, then exports it to PDF and uploads THAT to
+    vne-generation (Phase 2c, 2026-10-04). Without a print setup LibreOffice/Excel print
+    the sheet two pages wide and every row is torn apart, which no reader survives
+    (measured 2026-10-03). Landscape, one page wide, header row repeated."""
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.paperSize = ws.PAPERSIZE_A4
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.page_margins.left = ws.page_margins.right = 0.4
+    ws.page_margins.top = ws.page_margins.bottom = 0.5
+    ws.print_options.horizontalCentered = True
 
 
 def _cell(ws: Worksheet, row: int, col: int, value, *, font=_FONT, align=_CENTER,

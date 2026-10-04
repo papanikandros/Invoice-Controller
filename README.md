@@ -104,21 +104,30 @@ Without a Fragenkatalog you can drive it ad-hoc: `--firma "Muster GmbH" --strass
 ## Run vne-generation
 
 `invoice-controller eew vne-generation <project_dir>` classifies the folder, extracts every invoice
-(header + positions, per-invoice cross-sum), splits each netto by the vendor's IK/NK ratio and
-writes `VNE-Tabelle.xlsx`. The ratio source, in priority order: a verified `Kostenaufstellung.xlsx`
-(or `.ods`) in the folder → a consultant-built Kostenaufstellung PDF → live extraction of the
-offer PDFs (the only tier that costs offer-side LLM calls). A `projekt.yaml` supplies client,
-Bewilligungszeitraum and Bescheid figures; the web UI takes them as form fields and pre-fills
-them from an uploaded Zuwendungsbescheid.
+(header + positions, per-invoice cross-sum), **renames every invoice** to
+`<Rechnungsgeber>_<Rechnungsnummer>_<YYYY-MM-DD>.pdf` (ZIP `Rechnungen_umbenannt.zip` with an
+`Umbenennung.csv`; a field the extraction could not read becomes `UNKLAR`), splits each netto by the
+vendor's IK/NK ratio and writes `VNE-Tabelle.xlsx`. The ratio source: the consultant's **verified
+Kostenaufstellung as PDF** (export the checked `Kostenaufstellung.xlsx` to PDF and put it in the
+folder — the xlsx itself is no input), else live extraction of the offer PDFs (the only tier that
+costs offer-side LLM calls). A `projekt.yaml` supplies client, Antragstellung, AavM-Genehmigung,
+Zuwendungsbescheid (eingegangen/datiert), Bewilligungszeitraum, Bescheid figures and the header
+identifiers; the web UI takes them as form fields and pre-fills them from an uploaded
+Zuwendungsbescheid.
 
 ```sh
 uv run invoice-controller eew vne-generation path/to/project-folder/ [--no-llm-matching]
 ```
 
-The second sheet, `Positionsabgleich`, is the scope check: invoice positions matched to offer
-positions per vendor (article number, description, price, quantity; an LLM pass only for what
-stays unmatched), variance per position in red, `FEHLT` / `EXTRA` rows, and a lump-sum rule for
-vendors that bill the whole order as one line. Every match is a proposal for the consultant.
+The workbook follows the consultant's `(Vorlage VNE-Maske)` cell logic: only extracted or typed
+values are literals (yellow), everything else is an Excel formula (netto = brutto/(1+MwSt), Netto
+nach Skonto, category amounts, Σ rows, Förderbetrag chain, Fristen). The two fundability rules
+— `Auftrag erteilt ≥ Antragstellung` and `Rechnungsdatum ≥ Zuwendungsbescheid` (or `≥ AavM-Genehmigung`
+when one exists) — are checked three ways that must agree: the F formula with its "… zu früh!"
+message row, the Python flags on the console/job page, and conditional formatting that turns the
+offending date cell red. A failed invoice counts nothing. The second sheet, `Positionsabgleich`, is
+the scope check: invoice positions matched to offer positions per vendor, variance per position in
+red, `FEHLT` / `EXTRA` rows, a lump-sum rule for vendors that bill the whole order as one line.
 
 ## Run BEG vne-generation
 

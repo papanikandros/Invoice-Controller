@@ -47,6 +47,11 @@ class VneRow:
     window_ok: bool | None          # None = no window configured → column stays blank
     skonto_rate: Decimal
     netto_after_skonto: Decimal
+    # Phase 2c V2: the two binding checks (None = not evaluable, never guessed).
+    auftrag_ok: bool | None = None
+    rechnung_ok: bool | None = None
+    # Phase 2c V6: the renamed filename the Beleg column shows (set by the orchestrator).
+    beleg_name: str = ""
     splits: list[SplitRow] = field(default_factory=list)
     flags: list[str] = field(default_factory=list)
     # Duplicate or failed extraction: rendered for review but excluded from every
@@ -86,6 +91,7 @@ class VneResult:
     ignored: list[Path]             # `other`-classified documents, reported by name
     ratio_source: str
     ratio_path: Path | None = None  # the Kostenaufstellung file the Anteile came from
+    renames: list = field(default_factory=list)   # vne.rename.Renamed per invoice (V6)
     vendor_summaries: list[VendorSummary] = field(default_factory=list)
     beantragt_ik: Decimal | None = None
     beantragt_nk: Decimal | None = None
@@ -246,6 +252,22 @@ def compute_vne(
         window_ok = config.window_ok(inv.invoice_date)
         if window_ok is False:
             flags.append("Rechnungsdatum außerhalb des Bewilligungszeitraums")
+        auftrag_ok = config.auftrag_ok(inv.order_date)
+        if auftrag_ok is False:
+            flags.append(
+                f"NICHT FÖRDERFÄHIG: Auftrag erteilt am {inv.order_date:%d.%m.%Y} liegt VOR der "
+                f"Antragstellung ({config.antragstellung:%d.%m.%Y})"
+            )
+        rechnung_ok = config.rechnung_ok(inv.invoice_date)
+        if rechnung_ok is False:
+            bound_label = ("AavM-Genehmigung" if config.aavm_genehmigung else "Zuwendungsbescheid")
+            flags.append(
+                f"NICHT FÖRDERFÄHIG: Rechnungsdatum {inv.invoice_date:%d.%m.%Y} liegt VOR "
+                f"{bound_label} ({config.rechnung_untergrenze:%d.%m.%Y})"
+            )
+        # The sheet's J formula zeroes a failed row (=IF(F="ja",…,0)); the Python totals
+        # must say the same, or CLI/job page and workbook disagree by that invoice.
+        fundable = auftrag_ok is not False and rechnung_ok is not False
 
         if config.client is not None:
             # A1 (2026-09-03): on a masked run the deterministic pre-masking check is
@@ -267,6 +289,8 @@ def compute_vne(
         splits: list[SplitRow] = []
         if unusable:
             pass  # duplicates and failed extractions get no split — cells stay empty
+        elif not fundable:
+            pass  # date rule failed: visible, red, and worth nothing — like the sheet
         elif own:
             splits.append(SplitRow("EK", Decimal(1), netto_after))
         elif ratio is not None:
@@ -285,6 +309,8 @@ def compute_vne(
                 vendor_ratio=ratio,
                 own_company=own,
                 window_ok=window_ok,
+                auftrag_ok=auftrag_ok,
+                rechnung_ok=rechnung_ok,
                 skonto_rate=skonto_rate,
                 netto_after_skonto=netto_after,
                 splits=splits,

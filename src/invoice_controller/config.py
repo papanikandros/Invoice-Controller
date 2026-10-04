@@ -44,6 +44,36 @@ class ProjektConfig(BaseModel):
     bewilligungszeitraum_start: date | None = None
     bewilligungszeitraum_end: date | None = None
     bescheid: BescheidConfig | None = None
+    # Phase 2c V2 (consultant rules, 2026-10-04): the two date checks that decide
+    # fundability. Auftrag erteilt must not precede the Antragstellung; the Rechnung
+    # must not precede the Zuwendungsbescheid — unless an AavM (vorzeitiger
+    # Maßnahmenbeginn) was granted, then its Genehmigung date is the lower bound.
+    antragstellung: date | None = None
+    aavm_genehmigung: date | None = None
+    bescheid_eingegangen: date | None = None
+    bescheid_datiert: date | None = None
+    # Header identifiers of the VNE-Maske (Bescheid-extracted and/or typed).
+    kennung: str | None = None
+    passwort: str | None = None
+    iban: str | None = None
+    steuernummer: str | None = None
+
+    @property
+    def rechnung_untergrenze(self) -> date | None:
+        return self.aavm_genehmigung or self.bescheid_datiert
+
+    def auftrag_ok(self, order_date: date | None) -> bool | None:
+        """None when either date is unknown — nobody can validate what no document
+        states (consultant decision Q7, 2026-10-04); False is a funding-killer."""
+        if order_date is None or self.antragstellung is None:
+            return None
+        return order_date >= self.antragstellung
+
+    def rechnung_ok(self, invoice_date: date) -> bool | None:
+        bound = self.rechnung_untergrenze
+        if bound is None:
+            return None
+        return invoice_date >= bound
 
     @property
     def has_window(self) -> bool:

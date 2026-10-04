@@ -148,20 +148,39 @@ class TestJobStore:
 
 class TestVneConfigFromParams:
     def test_full_params(self) -> None:
+        from datetime import date
         from decimal import Decimal
 
         from invoice_controller.web.registry import vne_config_from_params
 
         config, flags = vne_config_from_params({
             "kunde_name": "ZePa GmbH", "kunde_adresse": "Weg 1, 12345 Ort",
+            "antragstellung": "14.04.2025", "aavm_genehmigung": "", "bescheid_eingegangen": "18.06.2025",
+            "bescheid_datiert": "18.06.2025",
             "zeitraum_von": "01.01.2025", "zeitraum_bis": "31.12.2026",
             "foerderbetrag": "45.000,00", "foerderanteil": "40", "agvo": "",
+            "kennung": "7176000", "passwort": "33442", "iban": "DE58 4788 0031 0503 2623 00", "steuernummer": "5347057122349",
         })
         assert flags == []
         assert config.client.name == "ZePa GmbH"
-        assert config.has_window and config.window_ok(__import__("datetime").date(2025, 6, 1))
+        assert config.has_window and config.window_ok(date(2025, 6, 1))
         assert config.bescheid.foerderbetrag == Decimal("45000.00")
         assert config.bescheid.kostendeckel_foerderanteil == Decimal("0.4")
+        assert (config.antragstellung, config.bescheid_datiert, config.kennung) == (date(2025, 4, 14), date(2025, 6, 18), "7176000")
+        # the two binding rules (consultant, 2026-10-04)
+        assert config.auftrag_ok(date(2025, 4, 13)) is False and config.auftrag_ok(date(2025, 4, 14)) is True
+        assert config.auftrag_ok(None) is None                       # nothing to validate against
+        assert config.rechnung_ok(date(2025, 6, 17)) is False and config.rechnung_ok(date(2025, 6, 18)) is True
+        config.aavm_genehmigung = date(2025, 5, 2)                   # AavM: Genehmigung date is the lower bound
+        assert config.rechnung_ok(date(2025, 5, 1)) is False and config.rechnung_ok(date(2025, 5, 2)) is True
+
+    def test_missing_rule_dates_are_named(self) -> None:
+        from invoice_controller.web.registry import vne_config_from_params
+
+        config, flags = vne_config_from_params({"kunde_name": "X"})
+        assert config.auftrag_ok(__import__("datetime").date(2025, 1, 1)) is None
+        assert any("Antragstellung nicht angegeben" in f for f in flags)
+        assert any("Zuwendungsbescheid-Datum nicht angegeben" in f for f in flags)
 
     def test_empty_params_degrade_with_named_flags(self) -> None:
         from invoice_controller.web.registry import vne_config_from_params
@@ -171,6 +190,7 @@ class TestVneConfigFromParams:
         assert any("Adressprüfung" in f for f in flags)
         assert any("Zeitraum" in f for f in flags)
         assert any("Förderbetrag-Block" in f for f in flags)
+        assert any("Antragstellung nicht angegeben" in f for f in flags)
 
     def test_unparseable_date_names_the_field(self) -> None:
         import pytest
@@ -182,6 +202,24 @@ class TestVneConfigFromParams:
 
 
 class TestBescheidMerge:
+    def test_rule_dates_and_identifiers_adopted(self) -> None:
+        from datetime import date
+
+        from invoice_controller.extract.bescheid import EewBescheidMeta
+        from invoice_controller.web.registry import (
+            merge_bescheid_into_config,
+            vne_config_from_params,
+        )
+
+        config, _ = vne_config_from_params({"bescheid_datiert": "01.07.2025", "kennung": "typed"})
+        meta = EewBescheidMeta(bescheid_datum=date(2025, 6, 18), antrag_datum=date(2025, 4, 14),
+                               kennung="7176000")
+        adopted = merge_bescheid_into_config(config, meta)
+        assert config.bescheid_datiert == date(2025, 7, 1)            # typed wins
+        assert config.antragstellung == date(2025, 4, 14) and config.kennung == "typed"
+        assert config.iban is None                                     # never from the Bescheid (BAFA's account)
+        assert any("Antragstellung 14.04.2025" in a for a in adopted)
+
     def test_ui_fields_win_and_gaps_fill(self) -> None:
         from datetime import date
         from decimal import Decimal
