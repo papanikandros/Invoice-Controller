@@ -306,3 +306,43 @@ class TestMandatoryRuleDates:
         required = {f.key for f in vne.fields if f.required}
         assert {"projekt", "antragstellung", "bescheid_datiert"} <= required
         assert "aavm_genehmigung" not in required and "bescheid_eingegangen" not in required
+
+
+class TestBescheidPrefill:
+    """Todo #12: the Zuwendungsbescheid fills EMPTY fields at upload time, typed wins."""
+
+    def test_mapping_in_german_formats(self) -> None:
+        from datetime import date
+        from decimal import Decimal
+
+        from invoice_controller.extract.bescheid import EewBescheidMeta
+        from invoice_controller.web.prefill import bescheid_prefill
+
+        meta = EewBescheidMeta(empfaenger_name="LLM Name", antrag_datum=date(2025, 4, 14), bescheid_datum=date(2025, 6, 18),
+                               bewilligungszeitraum_start=date(2025, 6, 18), bewilligungszeitraum_end=date(2028, 6, 22),
+                               foerderbetrag=Decimal("64125"), foerderanteil_pct=Decimal("40"), kennung="7176000")
+        values = bescheid_prefill(meta, ("Craemer GmbH", "Brocker Str. 1, 33442 Herzebrock"))
+        assert values == {
+            "kunde_name": "Craemer GmbH", "kunde_adresse": "Brocker Str. 1, 33442 Herzebrock",
+            "antragstellung": "14.04.2025", "bescheid_datiert": "18.06.2025",
+            "zeitraum_von": "18.06.2025", "zeitraum_bis": "22.06.2028",
+            "foerderbetrag": "64.125,00", "foerderanteil": "40", "kennung": "7176000",
+        }
+
+    def test_typed_values_are_never_overwritten(self) -> None:
+        from invoice_controller.web.prefill import apply_prefill
+
+        got = apply_prefill({"antragstellung": "01.01.2025", "kennung": "  ", "foerderbetrag": ""},
+                            {"antragstellung": "14.04.2025", "kennung": "7176000", "foerderbetrag": "1,00"})
+        assert got == {"kennung": "7176000", "foerderbetrag": "1,00"}
+
+    def test_extraction_cache_is_keyed_by_content(self, tmp_path, monkeypatch) -> None:
+        from invoice_controller.extract import bescheid as b
+
+        calls = []
+        monkeypatch.setattr(b, "extract_eew_bescheid", lambda paths: calls.append(1) or b.EewBescheidMeta())
+        b._META_CACHE.clear()
+        a = tmp_path / "upload.pdf"; a.write_bytes(b"same")
+        c = tmp_path / "renamed-in-run.pdf"; c.write_bytes(b"same")
+        b.extract_eew_bescheid_cached([a]); b.extract_eew_bescheid_cached([c])
+        assert len(calls) == 1

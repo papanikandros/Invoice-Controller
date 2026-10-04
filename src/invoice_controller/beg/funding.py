@@ -163,6 +163,20 @@ def _doc_content(path: Path) -> list[Any]:
     return parts
 
 
+_META_CACHE: dict[tuple[str, ...], FundingMeta] = {}
+
+
+def extract_funding_meta_cached(paths: list[Path]) -> FundingMeta:
+    """Upload-time pre-fill (todo #12) and the run share one extraction, keyed by file
+    content so the copy in the run directory hits the same entry."""
+    import hashlib
+
+    key = tuple(hashlib.sha256(p.read_bytes()).hexdigest() for p in paths)
+    if key not in _META_CACHE:
+        _META_CACHE[key] = extract_funding_meta(paths)
+    return _META_CACHE[key]
+
+
 def extract_funding_meta(
     paths: list[Path],
     agent: Agent[None, FundingMeta] | None = None,

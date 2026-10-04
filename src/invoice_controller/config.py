@@ -59,21 +59,22 @@ class ProjektConfig(BaseModel):
     steuernummer: str | None = None
 
     @property
+    def date_rules(self):
+        from invoice_controller.vne.daterules import DateRules
+
+        return DateRules(self.antragstellung, self.aavm_genehmigung, self.bescheid_datiert)
+
+    @property
     def rechnung_untergrenze(self) -> date | None:
-        return self.aavm_genehmigung or self.bescheid_datiert
+        return self.date_rules.rechnung_untergrenze
 
     def auftrag_ok(self, order_date: date | None) -> bool | None:
         """None when either date is unknown — nobody can validate what no document
         states (consultant decision Q7, 2026-10-04); False is a funding-killer."""
-        if order_date is None or self.antragstellung is None:
-            return None
-        return order_date >= self.antragstellung
+        return self.date_rules.auftrag_ok(order_date)
 
     def rechnung_ok(self, invoice_date: date) -> bool | None:
-        bound = self.rechnung_untergrenze
-        if bound is None:
-            return None
-        return invoice_date >= bound
+        return self.date_rules.rechnung_ok(invoice_date)
 
     @property
     def has_window(self) -> bool:

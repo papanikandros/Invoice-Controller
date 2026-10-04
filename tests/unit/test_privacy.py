@@ -82,6 +82,19 @@ class TestVariantsAndMasking:
         parsed = parse_empfaenger(text)
         assert parsed == ("Craemer GmbH", "Brocker Str. 1, 33442 Herzebrock-Clarholz")
 
+    def test_empfaenger_parse_skips_the_date_line(self) -> None:
+        """EK4_333 (2026-10-05): BAFA prints "DATUM Eschborn, 26.03.2026" on the recipient's
+        rows — it must never be taken for the street."""
+        text = (
+            "KOMMUNIKATION eew@bafa.bund.de\n"
+            "MKT - Mannel Kunststofftechnik GmbH\n"
+            "Herr Christian Schulte\n"
+            "Mühlhofe 4b\n"
+            "DATUM Eschborn, 26.03.2026\n"
+            "58540 Meinerzhagen\n"
+        )
+        assert parse_empfaenger(text) == ("MKT - Mannel Kunststofftechnik GmbH", "Mühlhofe 4b, 58540 Meinerzhagen")
+
     def test_empfaenger_parse_returns_none_on_unknown_layout(self) -> None:
         assert parse_empfaenger("kein Adressblock hier") is None
 

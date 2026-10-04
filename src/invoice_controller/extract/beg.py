@@ -17,7 +17,11 @@ from pathlib import Path
 from typing import Callable
 
 from invoice_controller.beg.compute import BegTable, build_table
-from invoice_controller.beg.funding import BegProgramType, FundingMeta, extract_funding_meta
+from invoice_controller.beg.funding import (
+    BegProgramType,
+    FundingMeta,
+    extract_funding_meta_cached,
+)
 from invoice_controller.beg.gewerk import GewerkLabel, label_invoice
 from invoice_controller.beg.payments import (
     ProofRecord,
@@ -30,6 +34,7 @@ from invoice_controller.extract.classify import Classified, DocClass, classify_f
 from invoice_controller.extract.invoice import extract_invoice
 from invoice_controller.match.vendor import normalize_vendor
 from invoice_controller.models import InvoiceDocument
+from invoice_controller.vne.daterules import DateRules
 
 ProgressFn = Callable[[str], None]
 
@@ -106,6 +111,7 @@ def build_kostenzusammenstellung(
     classified: list[Classified] | None = None,
     meta: FundingMeta | None = None,
     program_hint: BegProgramType | None = None,
+    dates: DateRules | None = None,
     on_progress: ProgressFn = lambda _msg: None,
 ) -> BegResult:
     # `classified`/`meta` can be handed in by a caller that already ran them (the CLI
@@ -127,7 +133,7 @@ def build_kostenzusammenstellung(
             meta = FundingMeta()
         else:
             on_progress(f"Programmdaten aus {len(funding_docs)} Förderdokument(en)")
-            meta = extract_funding_meta(funding_docs)
+            meta = extract_funding_meta_cached(funding_docs)
 
     # The EH-vs-EM template choice normally follows the extracted program type; when
     # the documents are missing/unclear the caller may assert it (the program family
@@ -165,7 +171,7 @@ def build_kostenzusammenstellung(
         on_progress(f"Gewerk: {inv.vendor_name}")
         labels[id(inv)] = label_invoice(inv)
 
-    table = build_table(meta, reconciliations, labels)
+    table = build_table(meta, reconciliations, labels, dates=dates)   # V7: typed dates win
 
     out = output_path or project_dir / f"Kostenzusammenstellung_{project_dir.name}.xlsx"
     write_kostenzusammenstellung(table, out)

@@ -344,6 +344,9 @@ def beg_vne_generation(
         None, "--template",
         help="EH/EM template override when the project ships no Antragsbestätigung/Bescheid (eh|em)",
     ),
+    antragstellung: str | None = typer.Option(None, "--antragstellung", help="Antragstellung TT.MM.JJJJ (wins over the extracted date)"),
+    aavm_genehmigung: str | None = typer.Option(None, "--aavm-genehmigung", help="AavM-Genehmigung TT.MM.JJJJ (lower bound for invoices)"),
+    bescheid_datiert: str | None = typer.Option(None, "--bescheid-datiert", help="Zuwendungsbescheid datiert TT.MM.JJJJ (wins over the extracted date)"),
 ) -> None:
     """BEG vne-generation — classify the project and extract the funding parameters.
 
@@ -410,12 +413,21 @@ def beg_vne_generation(
     from invoice_controller.extract.beg import build_kostenzusammenstellung
 
     console.print("\n[cyan]→ Rechnungen, Zahlungsnachweise und Gewerke verarbeiten[/cyan]")
+    from invoice_controller.normalize import parse_de_date
+    from invoice_controller.vne.daterules import DateRules
+
+    typed = DateRules(
+        antragstellung=parse_de_date(antragstellung) if antragstellung else None,
+        aavm_genehmigung=parse_de_date(aavm_genehmigung) if aavm_genehmigung else None,
+        bescheid_datiert=parse_de_date(bescheid_datiert) if bescheid_datiert else None,
+    )
     result = build_kostenzusammenstellung(
         project_dir,
         output_path=output,
         classified=classified,
         meta=meta,
         program_hint=program_hint,
+        dates=typed,
         on_progress=lambda msg: console.print(f"  · {msg}", style="dim"),
     )
 

@@ -34,6 +34,7 @@ from invoice_controller.beg.payments import PaymentStatus, Reconciliation
 from invoice_controller.match.vendor import normalize_vendor
 from invoice_controller.models import InvoiceDocument, InvoiceType
 from invoice_controller.normalize import format_de_decimal
+from invoice_controller.vne.daterules import DateRules
 
 
 @dataclass
@@ -50,6 +51,13 @@ class BegRow:
     anmerkung: list[str] = field(default_factory=list)
     flags: list[str] = field(default_factory=list)  # red-rendered reasons
     source_path: Path | None = None
+    # V7 (2026-10-05): the EEW date rules, same three lines (vne/daterules.py).
+    auftrag_datum: date | None = None
+    auftrag_ok: bool | None = None
+    rechnung_ok: bool | None = None
+    fundable: bool = True
+    # Row verdict the sheet colours by: "fehler" (red) | "offen" (yellow) | "ok" (green).
+    status: str = "offen"
 
     @property
     def anmerkung_text(self) -> str:
@@ -62,6 +70,7 @@ class BegTable:
     massnahmen: list[BegRow]
     baubegleitung: list[BegRow]
     leistungszeitraum: tuple[date, date] | None
+    dates: DateRules = field(default_factory=DateRules)   # effective (typed wins over meta)
 
     @property
     def rows(self) -> list[BegRow]:
@@ -141,12 +150,24 @@ def _re_betrag(
     return derived, notes, flags
 
 
+def effective_dates(meta: FundingMeta, typed: DateRules | None = None) -> DateRules:
+    """Typed form values win; the extracted Antragsbestätigung/Bescheid dates fill the gaps."""
+    typed = typed or DateRules()
+    return DateRules(
+        antragstellung=typed.antragstellung or meta.antrag_date,
+        aavm_genehmigung=typed.aavm_genehmigung,
+        bescheid_datiert=typed.bescheid_datiert or meta.bescheid_date,
+    )
+
+
 def build_table(
     meta: FundingMeta,
     reconciliations: list[Reconciliation],
     labels: dict[int, GewerkLabel],
+    dates: DateRules | None = None,
 ) -> BegTable:
     """`labels` is keyed by id(invoice) — the orchestrator labels each invoice once."""
+    rules = effective_dates(meta, dates)
     invoices = [r.invoice for r in reconciliations]
     recon_by_id = {id(r.invoice): r for r in reconciliations}
     kept, folded = _fold_advances(invoices)
@@ -184,6 +205,27 @@ def build_table(
 
         notes.append("förderfähig prüfen")  # B3 pending — judgment cell stays empty
 
+        auftrag_ok = rules.auftrag_ok(inv.order_date)
+        rechnung_ok = rules.rechnung_ok(inv.invoice_date)
+        if auftrag_ok is False:
+            flags.append(f"NICHT FÖRDERFÄHIG: Auftrag erteilt am {inv.order_date:%d.%m.%Y} liegt VOR der "
+                         f"Antragstellung ({rules.antragstellung:%d.%m.%Y})")
+        if rechnung_ok is False:
+            bound_label = "AavM-Genehmigung" if rules.aavm_genehmigung else "Zuwendungsbescheid"
+            flags.append(f"NICHT FÖRDERFÄHIG: Rechnungsdatum {inv.invoice_date:%d.%m.%Y} liegt VOR "
+                         f"{bound_label} ({rules.rechnung_untergrenze:%d.%m.%Y})")
+        fundable = auftrag_ok is not False and rechnung_ok is not False
+        # Row verdict for the sheet colours (consultant legend): red = nicht förderfähig /
+        # prüfen (date rule, amount mismatch, cross-sum, unclear basis), yellow = Unterlagen
+        # fehlen (no payment proof — the only soft flag), green = everything checked.
+        hard = [f for f in flags if f != "kein Zahlungsnachweis"]
+        if not fundable or hard:
+            status = "fehler"
+        elif recon.status is PaymentStatus.NO_PROOF:
+            status = "offen"
+        else:
+            status = "ok"
+
         rows.append(
             BegRow(
                 section=label.section,
@@ -198,6 +240,11 @@ def build_table(
                 anmerkung=notes,
                 flags=flags,
                 source_path=inv.source_path,
+                auftrag_datum=inv.order_date,
+                auftrag_ok=auftrag_ok,
+                rechnung_ok=rechnung_ok,
+                fundable=fundable,
+                status=status,
             )
         )
 
@@ -211,10 +258,11 @@ def build_table(
         picked.sort(key=lambda r: (order[r.gewerk], r.re_datum, r.re_nr))
         return picked
 
-    dates = [r.re_datum for r in rows]
+    dates_seen = [r.re_datum for r in rows]
     return BegTable(
         meta=meta,
         massnahmen=_grouped(BegSection.MASSNAHME),
         baubegleitung=_grouped(BegSection.BAUBEGLEITUNG),
-        leistungszeitraum=(min(dates), max(dates)) if dates else None,
+        leistungszeitraum=(min(dates_seen), max(dates_seen)) if dates_seen else None,
+        dates=rules,
     )

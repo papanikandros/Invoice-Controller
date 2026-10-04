@@ -192,7 +192,11 @@ _EMPFAENGER_RE = re.compile(
     # then PLZ + Ort. First such block in the letter head wins.
     r"(?m)^(?P<name>[^\n]{4,80}?(?:GmbH\s*&\s*Co\.?\s*KG|GmbH|AG|KG|UG|e\.K\.|OHG|GbR|mbH))\s*\n"
     r"(?:[^\n]{2,60}\n){0,2}?"
-    r"(?P<street>[^\n]{3,60}\d[^\n]{0,12})\n"
+    # a street line is never the letter's date line ("DATUM Eschborn, 26.03.2026" sits
+    # on the recipient's rows in BAFA's layout — EK4_333 pre-fill, 2026-10-05)
+    r"(?P<street>(?!.*\bDATUM\b)(?!.*\d{1,2}\.\d{1,2}\.\d{4})[^\n]{3,60}\d[^\n]{0,12})\n"
+    # … and may sit BETWEEN street and PLZ line (left-column text of a two-column letter)
+    r"(?:[^\n]*\bDATUM\b[^\n]*\n)?"
     r"(?P<ort>\d{5}\s+[^\n]{2,40})"
 )
 

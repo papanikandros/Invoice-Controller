@@ -137,7 +137,13 @@ uv run invoice-controller beg vne-generation path/to/beg-project/
 
 Same classifier and invoice extraction; program metadata comes from the project's own
 Antragsbestätigung/BzA + Zuwendungsbescheid (no config file), payment proofs go in a
-`Zahlungsnachweise/` subfolder (or the second dropzone of the web UI).
+`Zahlungsnachweise/` subfolder (or the second dropzone of the web UI). The sheet follows the
+consultant's Kostenzusammenstellung with a parameter block on top (program dates, Fördersatz,
+Deckel — yellow inputs the Förderung formulas reference), the same two fundability date rules as
+EEW (`--antragstellung`, `--aavm-genehmigung`, `--bescheid-datiert` override the extracted dates;
+the web tab pre-fills them from an uploaded Antragsbestätigung/Bescheid), and rule-driven row
+colours: green = checked, yellow = Unterlagen fehlen (no payment proof), red = nicht förderfähig /
+prüfen. `förderfähig` stays an empty input until the eligibility rules (B3) exist.
 
 ## How cost-estimation extraction works
 

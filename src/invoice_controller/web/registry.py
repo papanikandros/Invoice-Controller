@@ -193,6 +193,27 @@ def vne_config_from_params(params: dict[str, str]) -> tuple["object", list[str]]
     ), flags
 
 
+def _typed_date_rules(params: dict[str, str]):
+    """The three date fields as typed (BEG tab) — empty fields stay None."""
+    from invoice_controller.normalize import parse_de_date
+    from invoice_controller.vne.daterules import DateRules
+
+    def de_date(key: str, lbl: str):
+        v = (params.get(key) or "").strip()
+        if not v:
+            return None
+        try:
+            return parse_de_date(v)
+        except Exception as exc:
+            raise ValueError(f"{lbl}: Datum nicht lesbar ({v!r}) — Format TT.MM.JJJJ") from exc
+
+    return DateRules(
+        antragstellung=de_date("antragstellung", "Antragstellung"),
+        aavm_genehmigung=de_date("aavm_genehmigung", "AavM-Genehmigung"),
+        bescheid_datiert=de_date("bescheid_datiert", "Zuwendungsbescheid datiert"),
+    )
+
+
 def merge_bescheid_into_config(config, meta) -> list[str]:
     """Fill config gaps from the extracted Zuwendungsbescheid — typed UI fields ALWAYS
     win; every adopted value is reported with provenance. Mutates config, returns the
@@ -241,7 +262,7 @@ def _config_with_bescheid(job: Job, params: dict[str, str]):
         if c.doc_class is DocClass.ZUWENDUNGSBESCHEID
     ]
     if bescheid_docs:
-        from invoice_controller.extract.bescheid import extract_eew_bescheid
+        from invoice_controller.extract.bescheid import extract_eew_bescheid_cached
 
         job.log(f"Zuwendungsbescheid: {', '.join(d.name for d in bescheid_docs)}")
         # A1: the Empfänger is parsed DETERMINISTICALLY first (LLM-free name source
@@ -257,7 +278,7 @@ def _config_with_bescheid(job: Job, params: dict[str, str]):
                     config.client = ClientConfig(name=parsed[0], address=parsed[1])
                     job.add_flag(f"Kunde deterministisch aus Bescheid: {parsed[0]}")
                     break
-        meta = extract_eew_bescheid(bescheid_docs)
+        meta = extract_eew_bescheid_cached(bescheid_docs)       # cached from the upload-time pre-fill
         adopted = merge_bescheid_into_config(config, meta)
         if adopted:
             job.add_flag("aus Zuwendungsbescheid übernommen: " + "; ".join(adopted))
@@ -358,8 +379,11 @@ class BegVneGeneration(Procedure):
             _inputs(job),
             output_path=job.run_dir / f"Kostenzusammenstellung_{_projekt(params)}.xlsx",
             program_hint=hint,
+            dates=_typed_date_rules(params),
             on_progress=job.log,
         )
+        if result.table.dates.is_empty:
+            job.add_flag("Keine Programmdaten (Antragstellung / Bescheid datiert) — Datumsprüfung entfällt, Kopfzellen rot")
 
         missing = result.meta.missing_fields()
         if missing:
@@ -503,7 +527,13 @@ PROCEDURES: tuple[Procedure, ...] = (
                 "Effizienzhaus (KfW, Bestätigung nach Durchführung)",
                 "Einzelmaßnahme (BAFA/KfW 458, Technischer Projektnachweis)",
             ),
-        )),
+        ),
+            # V7 (2026-10-05): the EEW date rules apply; typed values win over the
+            # Antragsbestätigung/Bescheid extraction, which pre-fills them at upload.
+            FieldSpec("antragstellung", "Antragstellung (Datum)", placeholder="TT.MM.JJJJ"),
+            FieldSpec("aavm_genehmigung", "AavM-Genehmigung (Datum, falls vorzeitiger Maßnahmenbeginn)", placeholder="TT.MM.JJJJ"),
+            FieldSpec("bescheid_datiert", "Zuwendungsbescheid datiert", placeholder="TT.MM.JJJJ"),
+        ),
         with_zahlungsnachweise=True,
         accept=".pdf,.png,.jpg,.jpeg",
     ),

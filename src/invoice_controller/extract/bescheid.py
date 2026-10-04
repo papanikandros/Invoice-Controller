@@ -84,6 +84,24 @@ def get_bescheid_agent() -> Agent[None, EewBescheidMeta]:
     )
 
 
+_META_CACHE: dict[tuple[str, ...], EewBescheidMeta] = {}
+
+
+def _content_key(paths: list[Path]) -> tuple[str, ...]:
+    import hashlib
+
+    return tuple(hashlib.sha256(p.read_bytes()).hexdigest() for p in paths)
+
+
+def extract_eew_bescheid_cached(paths: list[Path]) -> EewBescheidMeta:
+    """Upload-time pre-fill (todo #12) and the run both need the meta; keyed by file
+    CONTENT so the renamed copy in the run directory hits the same entry."""
+    key = _content_key(paths)
+    if key not in _META_CACHE:
+        _META_CACHE[key] = extract_eew_bescheid(paths)
+    return _META_CACHE[key]
+
+
 def extract_eew_bescheid(
     paths: list[Path], agent: Agent[None, EewBescheidMeta] | None = None
 ) -> EewBescheidMeta:

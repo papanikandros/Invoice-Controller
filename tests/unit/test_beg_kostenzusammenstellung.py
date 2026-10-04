@@ -167,16 +167,19 @@ class TestEmWriter:
             "Kostenzusammenstellung"
         ]
         assert ws.cell(1, 1).value.startswith("Kostenzusammenstellung - Technischer")
-        assert [ws.cell(2, c).value for c in range(1, 11)] == [
+        from invoice_controller.beg.xlsx import HEADER_ROW
+        assert [ws.cell(HEADER_ROW, c).value for c in range(1, 14)] == [
             "Gewerk", "Firma", "Re-Nr.", "Re-Datum", "Re.-Positionen", "Re-Betrag",
-            "bezahlt", "förderfähig", "Anmerkung", "Förderung",
+            "bezahlt", "förderfähig", "Anmerkung", "Förderung", "Auftrag erteilt", "Datumsprüfung", "Status",
         ]
         cells = {c.coordinate: c.value for row in ws.iter_rows() for c in row if c.value is not None}
         sums = [k for k, v in cells.items() if isinstance(v, str) and v.startswith("=SUM(F")]
         assert len(sums) == 2, "Maßnahmen + Baubegleitung Re-Betrag sums"
-        assert any(isinstance(v, str) and v.startswith("=MIN(H") and "*0.2" in v for v in cells.values()), (
-            "Förderung formula =MIN(HΣ,cap)×Satz"
+        # V7: Förderung = MIN(Σ förderfähig, Deckel) × Satz, referencing the yellow parameter cells
+        assert any(isinstance(v, str) and "MIN(H" in v and "*B5/100" in v for v in cells.values()), (
+            "Förderung formula references the Fördersatz/Deckel inputs"
         )
+        assert ws["B5"].value == 20 and ws["D5"].value == 60000      # parameters as inputs
         assert "Förderung 20% auf 60.000€" in cells.values()
         assert "Förderung 50% bis 5.000€" in cells.values()
         assert "Gesamtsumme" in cells.values()
@@ -213,7 +216,8 @@ class TestEhWriter:
         write_kostenzusammenstellung(table, out)
         ws = load_workbook(out)["Kostenzusammenstellung"]
         assert ws.cell(1, 1).value.startswith("Kostenzusammenstellung - Bestätigung")
-        assert [ws.cell(2, c).value for c in range(1, 9)] == [
+        from invoice_controller.beg.xlsx import HEADER_ROW
+        assert [ws.cell(HEADER_ROW, c).value for c in range(1, 9)] == [
             "Gewerk", "Firma", "Re-Nr.", "Re-Datum", "Re-Positionen", "Re-Betrag",
             "Förderfähiger Betrag", "Info",
         ]
@@ -259,3 +263,60 @@ class TestDedupe:
         kept, dropped = _dedupe([bad, good])
         assert kept == [good]
         assert dropped == [bad]
+
+
+class TestV7DateRulesAndColours:
+    """V7 (2026-10-05): the EEW date rules on the BEG sheet — formula, Python flag and
+    conditional format must agree; row colours are rule-driven, inputs yellow."""
+
+    def _table(self, **dates):
+        from invoice_controller.vne.daterules import DateRules
+
+        early = _invoice("Fenster GmbH", "F-1", "1000.00", brutto="1190.00")
+        early.order_date = date(2025, 4, 13)                       # before Antragstellung
+        early_inv = _invoice("Dach GmbH", "D-1", "2000.00", brutto="2380.00")
+        early_inv.invoice_date = date(2025, 6, 17)                 # before Bescheid
+        ok = _invoice("Heizung GmbH", "H-1", "3000.00", brutto="3570.00")
+        ok.invoice_date = date(2025, 7, 1)
+        ok.order_date = date(2025, 4, 14)
+        labels = {id(early): _label("Fenster"), id(early_inv): _label("Dach"), id(ok): _label("Heizung")}
+        rules = DateRules(antragstellung=date(2025, 4, 14), bescheid_datiert=date(2025, 6, 18), **dates)
+        return build_table(_meta(antrag_date=None, bescheid_date=None), [_paid(early), _paid(early_inv), _paid(ok)], labels, dates=rules)
+
+    def test_python_verdicts_and_statuses(self) -> None:
+        t = self._table()
+        by = {r.firma: r for r in t.massnahmen}
+        assert by["Fenster GmbH"].auftrag_ok is False and by["Fenster GmbH"].status == "fehler"
+        assert by["Dach GmbH"].rechnung_ok is False and not by["Dach GmbH"].fundable
+        assert by["Heizung GmbH"].fundable and by["Heizung GmbH"].status == "ok"
+        assert any("NICHT FÖRDERFÄHIG" in f for f in by["Fenster GmbH"].flags)
+
+    def test_aavm_moves_the_invoice_bound(self) -> None:
+        t = self._table(aavm_genehmigung=date(2025, 5, 1))
+        by = {r.firma: r for r in t.massnahmen}
+        assert by["Dach GmbH"].rechnung_ok is True                  # 17.06. ≥ AavM 01.05.
+
+    def test_sheet_formulas_agree_with_python(self, tmp_path: Path) -> None:
+        from tests.conftest import recalc_via_soffice
+
+        t = self._table()
+        out = tmp_path / "em.xlsx"
+        write_kostenzusammenstellung(t, out)
+        ws = load_workbook(recalc_via_soffice(out), data_only=True)["Kostenzusammenstellung"]
+        verdict = {ws.cell(r, 2).value: ws.cell(r, 12).value for r in range(10, 30) if ws.cell(r, 2).value}
+        for row in t.massnahmen:
+            assert verdict[row.firma] == ("ja" if row.fundable else "NEIN!"), row.firma
+        assert ws["D4"].value is not None                           # Untergrenze computed from B4
+
+    def test_inputs_yellow_and_colours_only_by_rule(self, tmp_path: Path) -> None:
+        t = self._table()
+        out = tmp_path / "em.xlsx"
+        write_kostenzusammenstellung(t, out)
+        ws = load_workbook(out)["Kostenzusammenstellung"]
+        yellow = lambda ref: ws[ref].fill.fill_type == "solid" and ws[ref].fill.fgColor.rgb.endswith("FFFF99")  # noqa: E731
+        assert all(yellow(ref) for ref in ("B3", "B4", "B5", "D5", "B10", "D10", "F10", "G10", "K10"))
+        assert ws["L10"].value.startswith("=IF(AND(K10") and not yellow("L10")
+        assert not any(c.fill.fgColor.rgb.endswith("FF9999") for row in ws.iter_rows(min_row=10, max_row=14)
+                       for c in row if c.fill and c.fill.fill_type)   # no literal red on data rows
+        ranges = {str(k.sqref) for k in ws.conditional_formatting._cf_rules}
+        assert {"B3", "B4", "D4", "B5", "K10", "D10", "A10:M10"} <= ranges

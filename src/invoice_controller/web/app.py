@@ -19,7 +19,7 @@ from pathlib import Path
 
 from nicegui import app, context, ui
 
-from invoice_controller.web import gate, theme
+from invoice_controller.web import gate, prefill, theme
 from invoice_controller.web.jobs import Job, JobStore
 from invoice_controller.web.registry import (
     PROCEDURES,
@@ -108,8 +108,55 @@ def _program_of(job: Job) -> Program | None:
 def _procedure_panel(proc: Procedure) -> None:
     pending: list[tuple[str, bytes, str | None]] = []
     field_inputs: dict[str, ui.input | ui.select] = {}
+    prefilled: set[str] = set()          # fields currently carrying a Bescheid value
 
     ui.label(proc.upload_hint).classes("ic-muted")
+
+    async def maybe_prefill(name: str, content: bytes) -> None:
+        """Todo #12 (2026-10-05): a Zuwendungsbescheid fills the EMPTY form fields the
+        moment it is uploaded, so the colleague checks the dates before the run uses
+        them. Typed values always win; the extraction is cached for the run."""
+        if not any(k in field_inputs for k in prefill.PREFILL_FIELDS):
+            return
+        import asyncio
+
+        from invoice_controller.extract.bescheid import extract_eew_bescheid_cached
+        from invoice_controller.extract.classify import DocClass, classify_pdf
+        from invoice_controller.pdf.text import extract_pages
+        from invoice_controller.privacy import parse_empfaenger
+
+        path = prefill.temp_upload_path(name, content)
+        try:
+            doc_class = classify_pdf(path).doc_class
+            if proc.program == "BEG":
+                if doc_class not in (DocClass.ANTRAGSBESTAETIGUNG, DocClass.ZUWENDUNGSBESCHEID):
+                    return
+                from invoice_controller.beg.funding import extract_funding_meta_cached
+
+                ui.notify(f"Förderdokument erkannt: {name} — Datumsfelder werden vorausgefüllt …")
+                new_values = prefill.funding_prefill(await asyncio.to_thread(extract_funding_meta_cached, [path]))
+            else:
+                if doc_class is not DocClass.ZUWENDUNGSBESCHEID:
+                    return
+                ui.notify(f"Zuwendungsbescheid erkannt: {name} — Felder werden vorausgefüllt …")
+                empfaenger = await asyncio.to_thread(lambda: parse_empfaenger("\n".join(extract_pages(path))))
+                meta = await asyncio.to_thread(extract_eew_bescheid_cached, [path])
+                new_values = prefill.bescheid_prefill(meta, empfaenger)
+        except Exception as exc:  # noqa: BLE001 — pre-fill is a convenience, never a blocker
+            ui.notify(f"Dokument konnte nicht gelesen werden ({type(exc).__name__}) — bitte Felder von Hand füllen",
+                      type="warning")
+            return
+        current = {k: (inp.value or "") for k, inp in field_inputs.items()}
+        values = prefill.apply_prefill(current, new_values)
+        for key, value in values.items():
+            inp = field_inputs.get(key)
+            if inp is None:
+                continue
+            prefilled.add(key)
+            inp.set_value(value)
+            inp.props(f'hint="{prefill.PREFILL_HINT}"')
+        ui.notify(f"{len(values)} Feld(er) aus dem Zuwendungsbescheid übernommen — bitte prüfen",
+                  type="positive")
 
     def stash(subfolder: str | None):
         async def handler(e) -> None:
@@ -119,6 +166,8 @@ def _procedure_panel(proc: Procedure) -> None:
             pending.append((e.file.name, content, subfolder))
             ui.notify(f"{e.file.name} hochgeladen")
             counter.set_text(f"{len(pending)} Datei(en) bereit")
+            if subfolder is None and e.file.name.lower().endswith(".pdf"):
+                await maybe_prefill(e.file.name, content)
         return handler
 
     ui.upload(on_upload=stash(None), multiple=True, auto_upload=True) \
@@ -143,8 +192,17 @@ def _procedure_panel(proc: Procedure) -> None:
             else:
                 # stack-label: with a placeholder present, Quasar's floating label
                 # would otherwise sit on top of the placeholder text.
-                field_inputs[spec.key] = ui.input(label, placeholder=spec.placeholder) \
+                inp = ui.input(label, placeholder=spec.placeholder) \
                     .props("stack-label").classes("w-full min-w-[22rem]")
+                field_inputs[spec.key] = inp
+
+                def _edited(_e, key=spec.key, inp=inp) -> None:
+                    # the colleague typed over a pre-filled value: it is theirs now
+                    if key in prefilled:
+                        prefilled.discard(key)
+                        inp.props(remove="hint")
+
+                inp.on("keydown", _edited)
 
     with ui.row().classes("items-center gap-6 mt-6"):
         def start() -> None:
