@@ -28,6 +28,7 @@ from invoice_controller.llm.extract import (
     _resolve_model,
     _run_with_http_retry,
 )
+from invoice_controller.extract.evidence import ground_fields
 from invoice_controller.normalize import normalize_text
 from invoice_controller.pdf.ocr import is_text_layer_empty, render_page_pngs
 from invoice_controller.pdf.text import extract_pages
@@ -61,6 +62,13 @@ class EewBescheidMeta(BaseModel):
     )
     # IBAN / Steuernummer are deliberately NOT extracted: the IBAN printed on a
     # Bescheid is BAFA's own Bundesbank account (EK4_333, 2026-10-04), never the client's.
+    # E1 (2026-10-06): verbatim quotes for the values the fundability rules depend on.
+    bescheid_datum_quote: str | None = None
+    antrag_datum_quote: str | None = None
+    kennung_quote: str | None = None
+    foerderbetrag_quote: str | None = None
+    # filled by extract_eew_bescheid after grounding (field → Evidence dict)
+    evidence: dict[str, Any] = Field(default_factory=dict)
 
 
 SYSTEM_PROMPT = """You extract the approval parameters from ONE German EEW Modul 4 Bewilligungsbescheid / Zuwendungsbescheid (BAFA approval letter). An honest null beats any fabricated value — everything you state is trusted downstream.
@@ -69,6 +77,7 @@ SYSTEM_PROMPT = """You extract the approval parameters from ONE German EEW Modul
 (B2) bewilligungszeitraum_start / _end: the Bewilligungszeitraum (project window — earliest date costs may count, completion deadline). Dates as YYYY-MM-DD.
 (B3) foerderbetrag: the approved Zuwendung/Förderbetrag in EUR. foerderanteil_pct: the Förderquote / Mehrkosten-Anteil in percent (e.g. 40). German numbers: "45.000,00" = 45000.00 — return decimal strings with dot separator.
 (B4) If the document is an Änderungsbescheid, extract ITS (amended) figures — the latest Bescheid is binding.
+(B7) EVIDENCE QUOTES: for bescheid_datum, antrag_datum, kennung and foerderbetrag also return `<field>_quote` — the shortest VERBATIM passage (≤ 80 characters, copied exactly, with its label) that states the value; null value → null quote; never paraphrase or invent.
 (B6) bescheid_datum: the letter's own date ("Eschborn, 26.03.2026"). antrag_datum: the application date the letter refers to ("Ihr Antrag vom 14.04.2025", "Antrag eingegangen am …"). kennung: the Vorgangsnummer / Aktenzeichen / Kennung verbatim (e.g. "EEW-SWG 720002505").
 (B5) Return every schema key explicitly; null for anything the document does not state. Never guess."""
 
@@ -122,4 +131,12 @@ def extract_eew_bescheid(
             joined = "\n".join(pages)
             message.append(f"[Dokument: {path.name}]\n{joined}")
     runner = agent or get_bescheid_agent()
-    return _run_with_http_retry(runner, message)
+    meta = _run_with_http_retry(runner, message)
+    text_pages = [p for path in paths for p in extract_pages(path)]
+    meta.evidence = {
+        f: ev.model_dump() for f, ev in ground_fields(
+            meta, ("bescheid_datum", "antrag_datum", "kennung", "foerderbetrag"),
+            text_pages if not is_text_layer_empty(text_pages) else None,
+        ).items()
+    }
+    return meta

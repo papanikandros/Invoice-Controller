@@ -16,6 +16,13 @@ from pydantic_ai import Agent
 
 from invoice_controller.extract.cross_sum import check_invoice_positions
 from invoice_controller.extract.einvoice import find_embedded_invoice_xml, parse_cii_invoice
+from invoice_controller.extract.evidence import (
+    FROM_FILENAME,
+    INVOICE_EVIDENCE_FIELDS,
+    XML,
+    Evidence,
+    ground_fields,
+)
 from invoice_controller.extract.grounding import check_amounts_grounded
 from invoice_controller.llm.extract import RETRY_SETTINGS
 from invoice_controller.llm.extract_invoice import (
@@ -109,6 +116,8 @@ def _strip_masked_recipient(extracted: ExtractedInvoice) -> None:
             setattr(extracted, field, None)
 
 
+_QUOTE_FIELDS = {f"{f}_quote" for f in INVOICE_EVIDENCE_FIELDS}
+
 # Filename tokens that are invoice-type markers, not vendor words (colleagues' naming:
 # "L&R-Kältetechnik-Sr-RG0018867-21.07.2026.pdf", "EnergieKonzept-Krause-1.Ar-RE-…").
 _FILENAME_TYPE_TOKENS = {"ar", "sr", "tr", "az", "rg", "re", "rechnung", "rechn", "nr", "invoice"}
@@ -132,10 +141,7 @@ def _vendor_is_recipient(vendor: str, recipient: str | None, client: str | None)
     recipient or the configured client — the image-letterhead failure (Kempmann →
     'MKT GmbH', EK4_333)."""
     v = normalize_vendor(vendor)
-    for other in (recipient, client):
-        if other and v & normalize_vendor(other):
-            return True
-    return False
+    return any(other and v & normalize_vendor(other) for other in (recipient, client))
 
 
 def _apply_filename_vendor(extracted, path: Path, mask: tuple[str, str | None] | None) -> bool:
@@ -154,6 +160,7 @@ def extract_invoice(
     *,
     with_retry: bool = True,
     mask: tuple[str, str | None] | None = None,
+    verify_agent=None,
 ) -> InvoiceDocument:
     # Tier 0 (R1, 2026-08-31): an embedded ZUGFeRD/Factur-X XML is the vendor's own
     # machine-readable invoice — exact amounts and line items, no OCR/LLM risk. The
@@ -169,7 +176,8 @@ def extract_invoice(
                 amount_check=check_invoice_amounts(extracted),
                 position_check=_position_check(extracted),
                 extraction_method="zugferd-xml",
-                **extracted.model_dump(),
+                evidence={f: Evidence(status=XML).model_dump() for f in INVOICE_EVIDENCE_FIELDS},
+                **extracted.model_dump(exclude=_QUOTE_FIELDS),
             )
         except Exception as exc:  # noqa: BLE001 — vendor XML must never break the pipeline
             xml_note = (
@@ -246,9 +254,24 @@ def extract_invoice(
     if xml_note:
         amount_check.message = "; ".join(m for m in (xml_note, amount_check.message) if m)
 
+    # E1: ground every evidence quote in the text the model read (None on the vision
+    # path → unverifiable-scan). Must run BEFORE the filename-vendor rule overwrites
+    # vendor_name, so the status describes what the model actually extracted.
+    evidence = ground_fields(extracted, INVOICE_EVIDENCE_FIELDS, None if use_vision else pages, method=method)
+    # E2: one narrow cite-then-check call for the doubtful fields only. Runs on real
+    # extractions (no injected stub) or when a verify agent is injected by a test.
+    if not use_vision and (agent is None or verify_agent is not None):
+        from invoice_controller.extract.verify import verify_doubtful_fields
+
+        evidence = verify_doubtful_fields(extracted, evidence, pages, agent=verify_agent)
+        position_check = _position_check(extracted)      # netto may have been corrected
+        amount_check = check_invoice_amounts(extracted)
+
     # The recipient check must run BEFORE masking strips the recipient (above), so the
     # comparison here uses the configured client name on masked runs.
     vendor_from_file = _apply_filename_vendor(extracted, path, mask)
+    if vendor_from_file:
+        evidence["vendor_name"] = Evidence(status=FROM_FILENAME, note="aus dem Dateinamen übernommen")
 
     return InvoiceDocument(
         source_path=path,
@@ -258,6 +281,7 @@ def extract_invoice(
         masked=masked,
         recipient_local_ok=recipient_local_ok,
         vendor_from_filename=vendor_from_file,
+        evidence={k: v.model_dump() for k, v in evidence.items()},
         extraction_method=method,
-        **extracted.model_dump(),
+        **extracted.model_dump(exclude=_QUOTE_FIELDS),
     )

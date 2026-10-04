@@ -139,6 +139,28 @@ def score_fields(
     return scores
 
 
+def evidence_counts(documents, fields: tuple[str, ...] = ("vendor_name", "invoice_number", "invoice_date", "order_date", "netto", "brutto")) -> dict[str, dict[str, int]]:
+    """E1: per-field evidence-status tallies over extracted InvoiceDocuments — the
+    honesty metric next to the accuracy scores (how often the model could prove its value)."""
+    out: dict[str, dict[str, int]] = {f: {} for f in fields}
+    for doc in documents:
+        ev = getattr(doc, "evidence", None) or {}
+        for f in fields:
+            status = (ev.get(f) or {}).get("status", "missing")
+            out[f][status] = out[f].get(status, 0) + 1
+    return out
+
+
+def format_evidence_counts(counts: dict[str, dict[str, int]]) -> str:
+    lines = []
+    for f, c in counts.items():
+        total = sum(c.values()) or 1
+        verified = c.get("verified", 0) + c.get("xml", 0)
+        rest = ", ".join(f"{k} {v}" for k, v in sorted(c.items()) if k not in ("verified", "xml"))
+        lines.append(f"  {f:15} belegt {verified}/{total}" + (f"  ({rest})" if rest else ""))
+    return "\n".join(lines)
+
+
 def merge_field_scores(into: dict[str, FieldScore], add: dict[str, FieldScore]) -> None:
     for key, s in add.items():
         target = into.setdefault(key, FieldScore())

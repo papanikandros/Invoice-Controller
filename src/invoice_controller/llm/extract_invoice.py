@@ -52,6 +52,14 @@ class ExtractedInvoice(BaseModel):
     cumulative_netto: Decimal | None = None
     deducted_advances_netto: Decimal | None = None
     positions: list[InvoicePosition] = []
+    # E1 (2026-10-06): verbatim evidence quotes — grounded by extract/evidence.py, never
+    # trusted as such. Null when the value is null.
+    vendor_name_quote: str | None = None
+    invoice_number_quote: str | None = None
+    invoice_date_quote: str | None = None
+    order_date_quote: str | None = None
+    netto_quote: str | None = None
+    brutto_quote: str | None = None
 
 
 SYSTEM_PROMPT = """You extract structured data from German invoices (Rechnungen) for a funded-project close-out workflow (EEW Modul 4 / BEG). The consultant uses your output to build the Verwendungsnachweis submission. Correctness is non-negotiable: the consultant always reviews, so an honest "field missing" beats any fabricated value.
@@ -85,6 +93,8 @@ CRITICAL RULES, in order of importance:
 (I10) When a field is genuinely absent, return it EXPLICITLY as null — output every schema key, never leave one out, never fabricate invoice numbers, dates, or amounts. (Models measurably invent values for absent fields when allowed to skip keys; an explicit null is the honest answer.) If the document turns out not to be an invoice at all (e.g. a contract or payment advice), still fill what exists and set `subject` to a short description of what the document actually is.
 
 (I11) POSITIONS — extract EVERY billed line item into `positions`: pos (the printed position number, "" when unnumbered), description (short name, not the full scope prose), qty, unit, unit_price_net, line_total_net (the line's NET total; NEGATIVE for discount/Nachlass/credit lines). Sub-items without their own price, group subtotals (Zwischensumme, Titelsumme, Übertrag), the Nettosumme/MwSt/Brutto rows, and payment terms are NOT positions. A document-level discount printed as its own line (Rabatt/Nachlass) IS a position with a negative line_total_net.
+
+(I13) EVIDENCE QUOTES: for vendor_name, invoice_number, invoice_date, order_date, netto and brutto ALSO return `<field>_quote` — the shortest VERBATIM passage of the text (≤ 80 characters, copied exactly, including its label, e.g. "Rechnungsdatum: 21.07.2026" or "Nettobetrag 15.640,00 €") that states the value. Never paraphrase, never assemble a quote from several places, never invent one; a null value gets a null quote.
 
 (I12) POSITION CROSS-SUM INTENT: the extracted positions must sum to the invoice's stated net total — Σ(line_total_net) = Nettosumme (for a Schlussrechnung: the CUMULATIVE net total before deducted advances, since its position table describes the whole project scope). Deterministic code verifies this and flags any mismatch, so never invent, merge, or drop lines to force agreement — extract faithfully what is printed.
 """

@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from invoice_controller.config import ProjektConfig
+from invoice_controller.extract.evidence import DOUBTFUL, STATUS_DE
 from invoice_controller.match.vendor import is_own_company, match_vendor, normalize_vendor
 from invoice_controller.models import InvoiceDocument, InvoiceType
 from invoice_controller.vne.ratios import VendorRatio, is_statement_block
@@ -265,6 +266,13 @@ def compute_vne(
                 f"NICHT FÖRDERFÄHIG: Rechnungsdatum {inv.invoice_date:%d.%m.%Y} liegt VOR "
                 f"{bound_label} ({config.rechnung_untergrenze:%d.%m.%Y})"
             )
+        # E1: a fundability date the grounding could not confirm is a review item even
+        # when the rule passes — the value itself may be a misread.
+        for field, lbl in (("invoice_date", "Rechnungsdatum"), ("order_date", "Auftragsdatum"),
+                           ("invoice_number", "Rechnungsnummer")):
+            ev = (inv.evidence or {}).get(field) or {}
+            if ev.get("status") in DOUBTFUL:
+                flags.append(f"{lbl} unbelegt ({STATUS_DE.get(ev['status'], ev['status'])}) — im Beleg prüfen")
         # The sheet's J formula zeroes a failed row (=IF(F="ja",…,0)); the Python totals
         # must say the same, or CLI/job page and workbook disagree by that invoice.
         fundable = auftrag_ok is not False and rechnung_ok is not False

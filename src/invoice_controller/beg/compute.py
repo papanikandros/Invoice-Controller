@@ -34,6 +34,7 @@ from invoice_controller.beg.payments import PaymentStatus, Reconciliation
 from invoice_controller.match.vendor import normalize_vendor
 from invoice_controller.models import InvoiceDocument, InvoiceType
 from invoice_controller.normalize import format_de_decimal
+from invoice_controller.extract.evidence import DOUBTFUL, STATUS_DE
 from invoice_controller.vne.daterules import DateRules
 
 
@@ -58,6 +59,7 @@ class BegRow:
     fundable: bool = True
     # Row verdict the sheet colours by: "fehler" (red) | "offen" (yellow) | "ok" (green).
     status: str = "offen"
+    evidence: dict = field(default_factory=dict)      # E1: per-field provenance of the invoice
 
     @property
     def anmerkung_text(self) -> str:
@@ -205,6 +207,10 @@ def build_table(
 
         notes.append("förderfähig prüfen")  # B3 pending — judgment cell stays empty
 
+        for fld, lbl in (("invoice_date", "Re-Datum"), ("order_date", "Auftragsdatum"), ("invoice_number", "Re-Nr.")):
+            ev = (inv.evidence or {}).get(fld) or {}
+            if ev.get("status") in DOUBTFUL:
+                flags.append(f"{lbl} unbelegt ({STATUS_DE.get(ev['status'], ev['status'])}) — im Beleg prüfen")
         auftrag_ok = rules.auftrag_ok(inv.order_date)
         rechnung_ok = rules.rechnung_ok(inv.invoice_date)
         if auftrag_ok is False:
@@ -245,6 +251,7 @@ def build_table(
                 rechnung_ok=rechnung_ok,
                 fundable=fundable,
                 status=status,
+                evidence=dict(inv.evidence or {}),
             )
         )
 

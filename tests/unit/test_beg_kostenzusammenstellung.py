@@ -320,3 +320,18 @@ class TestV7DateRulesAndColours:
                        for c in row if c.fill and c.fill.fill_type)   # no literal red on data rows
         ranges = {str(k.sqref) for k in ws.conditional_formatting._cf_rules}
         assert {"B3", "B4", "D4", "B5", "K10", "D10", "A10:M10"} <= ranges
+
+
+class TestEvidenceOnBegSheet:
+    def test_status_cells_comment_and_flag(self, tmp_path: Path) -> None:
+        inv = _invoice("Fenster GmbH", "F-1", "1000.00", brutto="1190.00")
+        inv.evidence = {"invoice_date": {"status": "quote-not-found", "quote": "Datum 12.10.2025"},
+                        "invoice_number": {"status": "verified", "quote": "Rechnung F-1", "page": 1}}
+        table = build_table(_meta(), [_paid(inv)], {id(inv): _label("Fenster")})
+        row = table.massnahmen[0]
+        assert any("Re-Datum unbelegt" in f for f in row.flags) and row.status == "fehler"
+        out = tmp_path / "em.xlsx"
+        write_kostenzusammenstellung(table, out)
+        ws = load_workbook(out)["Kostenzusammenstellung"]
+        assert ws["N10"].value == "Zitat nicht im Text" and ws["P10"].value == "belegt"
+        assert "Rechnung F-1" in ws["C10"].comment.text

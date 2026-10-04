@@ -110,3 +110,16 @@ class TestLineItems:
     def test_datetime_normalized_to_date(self) -> None:
         from datetime import date, datetime
         assert dates_equal(datetime(2023, 3, 29, 0, 0), date(2023, 3, 29))
+
+
+def test_evidence_counts_tally_statuses() -> None:
+    from types import SimpleNamespace
+
+    from tests.harness.metrics import evidence_counts, format_evidence_counts
+
+    docs = [SimpleNamespace(evidence={"invoice_date": {"status": "verified"}, "netto": {"status": "verified"}}),
+            SimpleNamespace(evidence={"invoice_date": {"status": "value-not-in-quote"}}),
+            SimpleNamespace(evidence={})]
+    counts = evidence_counts(docs, fields=("invoice_date", "netto"))
+    assert counts["invoice_date"] == {"verified": 1, "value-not-in-quote": 1, "missing": 1}
+    assert "invoice_date    belegt 1/3" in format_evidence_counts(counts)

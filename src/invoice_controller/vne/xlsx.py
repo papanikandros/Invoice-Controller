@@ -30,12 +30,14 @@ from decimal import Decimal
 from pathlib import Path
 
 import openpyxl
+from openpyxl.comments import Comment
 from openpyxl.formatting.rule import FormulaRule
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
 from invoice_controller.config import ProjektConfig
+from invoice_controller.extract.evidence import STATUS_DE
 from invoice_controller.models import InvoiceType
 from invoice_controller.normalize import format_de_decimal
 from invoice_controller.vne.abgleich import AbgleichResult
@@ -53,6 +55,7 @@ _INPUT = PatternFill(start_color="FFFF99", end_color="FFFF99", fill_type="solid"
 _RED_FILL = PatternFill(start_color="FFCCCC", end_color="FFCCCC", fill_type="solid")  # Positionsabgleich sheet
 _YELLOW_FILL = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
 _CF_RED = PatternFill(start_color="FF9999", end_color="FF9999", fill_type="solid", bgColor="FF9999")
+_CF_YELLOW = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid", bgColor="FFEB9C")
 _BOLD = Font(bold=True)
 _WRAP = Alignment(wrap_text=True, vertical="top")
 
@@ -70,6 +73,8 @@ COL = {
     "brutto": "G", "netto": "H", "anmerkung": "I", "netto_skonto": "J", "kat": "K", "anteil": "L",
     "ik": "M", "nk": "N", "ek": "O", "beantragt_ik": "Q", "beantragt_nk": "R", "beantragt_ek": "S",
     "ansetzbar_ik": "T", "ansetzbar_nk": "U", "ansetzbar_ek": "V", "mwst": "W", "netto_extracted": "X",
+    # E1: evidence status of the cells the fundability rules read (drive the yellow CF)
+    "ev_rechnung": "Y", "ev_auftrag": "Z", "ev_nummer": "AA",
 }
 _HEADERS = {
     "A": "Herstellername des modulspezifischen Fördergegenstands",
@@ -95,6 +100,9 @@ _HEADERS = {
     "V": "ansetzbar\nEK",
     "W": "MwSt-Satz\nlt. Rechnung",
     "X": "Netto\nlt. Rechnung",
+    "Y": "Beleg\nRechnungsdatum",
+    "Z": "Beleg\nAuftragsdatum",
+    "AA": "Beleg\nRe-Nr.",
 }
 HEADER_ROW = 10
 FIRST_BLOCK_ROW = 11
@@ -243,6 +251,11 @@ def _block(ws: Worksheet, r: int, row: VneRow, result: VneResult) -> int:
         _formula(ws, f"N{rr}", f'=IF(K{rr}="NK",$J${r2}*L{rr},0)', fmt=_EUR)
         _formula(ws, f"O{rr}", f'=IF(K{rr}="EK",$J${r2}*L{rr},0)', fmt=_EUR)
 
+    # E1: provenance of the three cells the checks and the filename depend on. The
+    # German status is a plain literal (a fact the pipeline established); the yellow
+    # "unbelegt" format keys on it, and the quote travels as a cell comment.
+    _evidence_cells(ws, r1, inv)
+
     # Conditional formatting: the offending cell goes red, nothing else.
     _red_when(ws, f"C{r1}", f'AND(C{r1}<>"",$B$4<>"",C{r1}<$B$4)')
     _red_when(ws, f"E{r1}", f'AND(E{r1}<>"",$B$8<>"",E{r1}<$B$8)')
@@ -252,6 +265,38 @@ def _block(ws: Worksheet, r: int, row: VneRow, result: VneResult) -> int:
     _red_when(ws, f"A{r1}:B{r1}", f'OR(ISNUMBER(SEARCH("Duplikat",$I{r1})),ISNUMBER(SEARCH("unbrauchbar",$I{r1})))')
     _red_when(ws, f"G{r1}", f'ISNUMBER(SEARCH("Kreuzsumme",$I{r1}))')
     return r3 + 2
+
+
+_UNBELEGT = "OR({c}=\"Wert nicht im Zitat\",{c}=\"Zitat nicht im Text\",{c}=\"ohne Zitat\",{c}=\"unbestätigt\")"
+
+
+def _evidence_cells(ws: Worksheet, r: int, inv) -> None:
+    """Y/Z/AA = status of invoice_date / order_date / invoice_number; comments with the
+    quote on the value cells; yellow CF when the status is doubtful (red rules win)."""
+    ev = inv.evidence or {}
+    for field, status_col, value_col, lbl in (("invoice_date", "Y", "E", "Rechnungsdatum"),
+                                             ("order_date", "Z", "C", "Auftragsdatum"),
+                                             ("invoice_number", "AA", "B", "Rechnungsnummer")):
+        e = ev.get(field) or {}
+        status = e.get("status")
+        if status:
+            ws[f"{status_col}{r}"].value = STATUS_DE.get(status, status)
+            if e.get("quote"):
+                where = f"S. {e['page']}: " if e.get("page") else ""
+                ws[f"{value_col}{r}"].comment = Comment(f"{lbl} — {STATUS_DE.get(status, status)}\n{where}\"{e['quote'][:200]}\"",
+                                                        "Invoice-Controller")
+        ref = f"${status_col}{r}"
+        _yellow_when(ws, f"{value_col}{r}", _UNBELEGT.format(c=ref))
+    for field, value_col, lbl in (("netto", "X", "Netto"), ("brutto", "G", "Brutto"), ("vendor_name", "A", "Rechnungssteller")):
+        e = ev.get(field) or {}
+        if e.get("quote"):
+            where = f"S. {e['page']}: " if e.get("page") else ""
+            ws[f"{value_col}{r}"].comment = Comment(f"{lbl} — {STATUS_DE.get(e.get('status'), e.get('status'))}\n{where}\"{e['quote'][:200]}\"",
+                                                    "Invoice-Controller")
+
+
+def _yellow_when(ws: Worksheet, cell_range: str, formula: str) -> None:
+    ws.conditional_formatting.add(cell_range, FormulaRule(formula=[formula], fill=_CF_YELLOW, stopIfTrue=False))
 
 
 def write_vne_tabelle(result: VneResult, config: ProjektConfig, output_path: Path) -> None:
@@ -312,7 +357,7 @@ def write_vne_tabelle(result: VneResult, config: ProjektConfig, output_path: Pat
 
     widths = {"A": 40, "B": 44, "C": 13, "D": 13, "E": 13, "F": 14, "G": 14, "H": 14, "I": 44, "J": 14,
               "K": 8, "L": 10, "M": 14, "N": 14, "O": 14, "Q": 12, "R": 12, "S": 12, "T": 12, "U": 12, "V": 12,
-              "W": 10, "X": 14}
+              "W": 10, "X": 14, "Y": 14, "Z": 14, "AA": 14}
     for col, width in widths.items():
         ws.column_dimensions[col].width = width
     ws.freeze_panes = f"A{FIRST_BLOCK_ROW}"

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
+from typing import Any
 from enum import Enum
 from pathlib import Path
 
@@ -269,6 +270,9 @@ class InvoiceDocument(BaseModel):
     # The letterhead was an image and the LLM took the recipient for the vendor; the
     # vendor was taken from the colleague's filename instead (flagged, 2026-09-29).
     vendor_from_filename: bool = False
+    # E1 (2026-10-06): per-field provenance — extract/evidence.py statuses keyed by
+    # field name (vendor_name, invoice_number, invoice_date, order_date, netto, brutto).
+    evidence: dict[str, Any] = Field(default_factory=dict)
     amount_check: AmountCheck
     extraction_method: str = "pdfplumber+llm"
 

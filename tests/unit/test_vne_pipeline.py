@@ -787,3 +787,50 @@ class TestMaskeFormulasAgreeWithPython:
         assert not any(c.fill.fgColor.rgb.endswith("FF9999") for row in ws.iter_rows() for c in row if c.fill and c.fill.fill_type)
         ranges = {str(k.sqref) for k in ws.conditional_formatting._cf_rules}
         assert {"C11", "E11", "F11", "H11", "B4", "B6"} <= ranges
+
+
+class TestEvidenceWiring:
+    """E1: doubtful evidence → UNKLAR in the filename, a flag in the row, a status cell
+    + yellow format + comment in the sheet."""
+
+    @staticmethod
+    def _inv(evidence):
+        from datetime import date
+
+        from invoice_controller.models import AmountCheck
+
+        return InvoiceDocument(source_path=Path("Rg705174.pdf"), vendor_name="Rudi Sönnecken", invoice_number="705174",
+                               invoice_date=date(2026, 9, 9), netto=Decimal("954.73"), brutto=Decimal("1136.12"),
+                               mwst_pct=Decimal("19"), amount_check=AmountCheck(passed=True), evidence=evidence)
+
+    def test_doubtful_date_becomes_unklar_and_flag(self) -> None:
+        from invoice_controller.vne.rename import target_name
+
+        bad = {"invoice_date": {"status": "value-not-in-quote", "quote": "A.09.2026", "page": 1},
+               "invoice_number": {"status": "verified", "quote": "Rg.Nr. 705174", "page": 1},
+               "vendor_name": {"status": "verified", "quote": "Rudi Sönnecken", "page": 1}}
+        inv = self._inv(bad)
+        assert target_name(inv) == "Rudi Sönnecken_705174_UNKLAR.pdf"
+        row = compute_vne([inv], [], ProjektConfig()).invoices[0]
+        assert any("Rechnungsdatum unbelegt (Wert nicht im Zitat)" in f for f in row.flags)
+
+    def test_verified_and_scan_do_not_degrade_the_name(self) -> None:
+        from invoice_controller.vne.rename import target_name
+
+        ok = self._inv({"invoice_date": {"status": "verified"}, "invoice_number": {"status": "verified"}})
+        scan = self._inv({"invoice_date": {"status": "unverifiable-scan"}, "invoice_number": {"status": "unverifiable-scan"}})
+        assert target_name(ok) == target_name(scan) == "Rudi Sönnecken_705174_2026-09-09.pdf"
+
+    def test_sheet_carries_status_comment_and_yellow_rule(self, tmp_path: Path) -> None:
+        import openpyxl
+
+        inv = self._inv({"invoice_date": {"status": "value-not-in-quote", "quote": "A.09.2026", "page": 1},
+                         "invoice_number": {"status": "verified", "quote": "Rg.Nr. 705174", "page": 1},
+                         "netto": {"status": "verified", "quote": "Netto 954,73 €", "page": 1}})
+        out = tmp_path / "v.xlsx"
+        write_vne_tabelle(compute_vne([inv], [], ProjektConfig()), ProjektConfig(), out)
+        ws = openpyxl.load_workbook(out)["(Vorlage VNE-Maske)"]
+        assert ws["Y11"].value == "Wert nicht im Zitat" and ws["AA11"].value == "belegt"
+        assert "A.09.2026" in ws["E11"].comment.text and "954,73" in ws["X11"].comment.text
+        ranges = {str(k.sqref) for k in ws.conditional_formatting._cf_rules}
+        assert "E11" in ranges and "B11" in ranges

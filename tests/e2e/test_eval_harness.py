@@ -27,6 +27,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from harness.metrics import (  # noqa: E402
     LineItemReport,
+    evidence_counts,
+    format_evidence_counts,
     amounts_equal,
     merge_line_reports,
     score_fields,
@@ -149,12 +151,15 @@ def test_invoice_headers_against_zepa_vne():
             for m in fs.mismatches:
                 print("   ", m)
 
+    counts = evidence_counts(extracted)
+    print("\nEvidence (E1):\n" + format_evidence_counts(counts))
     payload = {
         "gt_rows": total,
         "paired": paired,
         "netto_correct": correct_netto,
         "brutto_correct": correct_brutto,
         "date_correct": correct_date,
+        "evidence": counts,
     }
     print(f"\nZePa headers: {payload}")
     _write_baseline("invoice_headers_zepa", payload)

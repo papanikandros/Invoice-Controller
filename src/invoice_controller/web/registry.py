@@ -239,12 +239,19 @@ def merge_bescheid_into_config(config, meta) -> list[str]:
     if config.bescheid.kostendeckel_foerderanteil is None and meta.foerderanteil_pct is not None:
         config.bescheid.kostendeckel_foerderanteil = meta.foerderanteil_pct / 100
         adopted.append(f"Förderanteil {format_de_decimal(meta.foerderanteil_pct)} %")
+    from invoice_controller.extract.evidence import DOUBTFUL, STATUS_DE
+
+    def _ev(field: str) -> str:
+        ev = (getattr(meta, "evidence", None) or {}).get(field) or {}
+        st = ev.get("status")
+        return f" — UNBELEGT ({STATUS_DE.get(st, st)}), bitte im Bescheid prüfen" if st in DOUBTFUL else ""
+
     if config.bescheid_datiert is None and meta.bescheid_datum:
         config.bescheid_datiert = meta.bescheid_datum
-        adopted.append(f"Bescheid datiert {meta.bescheid_datum:%d.%m.%Y}")
+        adopted.append(f"Bescheid datiert {meta.bescheid_datum:%d.%m.%Y}{_ev('bescheid_datum')}")
     if config.antragstellung is None and meta.antrag_datum:
         config.antragstellung = meta.antrag_datum
-        adopted.append(f"Antragstellung {meta.antrag_datum:%d.%m.%Y}")
+        adopted.append(f"Antragstellung {meta.antrag_datum:%d.%m.%Y}{_ev('antrag_datum')}")
     if config.kennung is None and meta.kennung:
         config.kennung = meta.kennung
         adopted.append(f"Kennung {meta.kennung}")

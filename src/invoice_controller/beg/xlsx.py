@@ -26,10 +26,12 @@ from decimal import Decimal
 from pathlib import Path
 
 from openpyxl import Workbook
+from openpyxl.comments import Comment
 from openpyxl.worksheet.worksheet import Worksheet
 
 from invoice_controller.beg.compute import BegRow, BegTable
 from invoice_controller.beg.funding import BegProgramType
+from invoice_controller.extract.evidence import STATUS_DE
 from invoice_controller.normalize import format_de_decimal
 from invoice_controller.template.cells import (
     BOLD,
@@ -59,10 +61,12 @@ P = {
 }
 HEADER_ROW = 9
 FIRST_ROW = 10
+_EV_COLS = ["Beleg Re-Datum", "Beleg Auftrag", "Beleg Re-Nr."]        # N, O, P (E1)
 COLS_EM = ["Gewerk", "Firma", "Re-Nr.", "Re-Datum", "Re.-Positionen", "Re-Betrag",
-           "bezahlt", "förderfähig", "Anmerkung", "Förderung", "Auftrag erteilt", "Datumsprüfung", "Status"]
+           "bezahlt", "förderfähig", "Anmerkung", "Förderung", "Auftrag erteilt", "Datumsprüfung", "Status", *_EV_COLS]
 COLS_EH = ["Gewerk", "Firma", "Re-Nr.", "Re-Datum", "Re-Positionen", "Re-Betrag",
-           "Förderfähiger Betrag", "Info", "", "", "Auftrag erteilt", "Datumsprüfung", "Status"]
+           "Förderfähiger Betrag", "Info", "", "", "Auftrag erteilt", "Datumsprüfung", "Status", *_EV_COLS]
+_UNBELEGT = 'OR({c}="Wert nicht im Zitat",{c}="Zitat nicht im Text",{c}="ohne Zitat",{c}="unbestätigt")'
 STATUS_LABEL = {"ok": "ok", "offen": "offen", "fehler": "prüfen"}
 
 
@@ -121,6 +125,19 @@ def _write_row(ws: Worksheet, r: int, row: BegRow, *, gewerk: str | None, em: bo
     formula(ws, f"L{r}",
             f'=IF(AND(K{r}<>"",$B$3<>"",K{r}<$B$3),"NEIN!",IF(AND($D$4<>"",D{r}<$D$4),"NEIN!","ja"))')
     inp(ws, f"M{r}", STATUS_LABEL.get(row.status, row.status))
+
+    # E1: provenance of Re-Datum / Auftrag / Re-Nr. — status literal, quote as comment,
+    # yellow "unbelegt" on the value cell (the red rules below take precedence).
+    for fld, st_col, val_col, lbl in (("invoice_date", "N", "D", "Re-Datum"), ("order_date", "O", "K", "Auftragsdatum"),
+                                      ("invoice_number", "P", "C", "Re-Nr.")):
+        e = (row.evidence or {}).get(fld) or {}
+        if e.get("status"):
+            ws[f"{st_col}{r}"].value = STATUS_DE.get(e["status"], e["status"])
+            if e.get("quote"):
+                where = f"S. {e['page']}: " if e.get("page") else ""
+                ws[f"{val_col}{r}"].comment = Comment(f"{lbl} — {STATUS_DE.get(e['status'], e['status'])}\n{where}\"{e['quote'][:200]}\"",
+                                                      "Invoice-Controller")
+        fill_when(ws, f"{val_col}{r}", _UNBELEGT.format(c=f"${st_col}{r}"), CF_YELLOW)
 
     # verdict colours: the offending date cell red; the whole row by status / formula
     red_when(ws, f"K{r}", f'AND(K{r}<>"",$B$3<>"",K{r}<$B$3)')
@@ -292,7 +309,7 @@ def write_kostenzusammenstellung(table: BegTable, output_path: Path) -> None:
         ws.cell(r, 3, "fehlt").fill = CF_RED
 
     widths = {"A": 26, "B": 30, "C": 28, "D": 14, "E": 14, "F": 13, "G": 13, "H": 13, "I": 44, "J": 13,
-              "K": 13, "L": 12, "M": 8}
+              "K": 13, "L": 12, "M": 8, "N": 14, "O": 14, "P": 14}
     for col, width in widths.items():
         ws.column_dimensions[col].width = width
     ws.freeze_panes = f"A{FIRST_ROW}"

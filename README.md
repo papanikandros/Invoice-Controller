@@ -125,7 +125,14 @@ nach Skonto, category amounts, Σ rows, Förderbetrag chain, Fristen). The two f
 — `Auftrag erteilt ≥ Antragstellung` and `Rechnungsdatum ≥ Zuwendungsbescheid` (or `≥ AavM-Genehmigung`
 when one exists) — are checked three ways that must agree: the F formula with its "… zu früh!"
 message row, the Python flags on the console/job page, and conditional formatting that turns the
-offending date cell red. A failed invoice counts nothing. The second sheet, `Positionsabgleich`, is
+offending date cell red. A failed invoice counts nothing. Every value that feeds those checks also
+carries **evidence**: the model cites a verbatim quote per field, the code locates it in the text it read
+and grades it (`belegt`, `Wert nicht im Zitat`, `Zitat nicht im Text`, `ohne Zitat`, `Scan — nicht
+prüfbar`). Fields the first pass could not ground get ONE narrow second question — the model must
+cite the passage again, and the value is only accepted if that passage exists in the text and contains
+it (`unbestätigt` otherwise, the first reading is kept, never guessed). What stays
+doubtful turns its cell yellow ("unbelegt"), becomes `UNKLAR` in the
+renamed file and a flag on the job page, and the quote sits in a cell comment. The second sheet, `Positionsabgleich`, is
 the scope check: invoice positions matched to offer positions per vendor, variance per position in
 red, `FEHLT` / `EXTRA` rows, a lump-sum rule for vendors that bill the whole order as one line.
 

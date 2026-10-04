@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
+from invoice_controller.extract.evidence import DOUBTFUL
 from invoice_controller.match.vendor import _LEGAL_FORMS
 from invoice_controller.models import InvoiceDocument
 
@@ -60,13 +61,22 @@ def date_part(d: date | None, *, today: date | None = None) -> str:
     return d.isoformat()
 
 
+def _doubtful(inv: InvoiceDocument, field: str) -> bool:
+    """E1: a field whose evidence the grounding could not confirm on a readable
+    document must not look right in a filename."""
+    ev = inv.evidence.get(field) if inv.evidence else None
+    return bool(ev) and ev.get("status") in DOUBTFUL
+
+
 def target_name(inv: InvoiceDocument, *, unusable: bool = False) -> str:
     """The new filename; `unusable` (netto 0 / duplicate) forces UNKLAR on every
-    field the extraction could not vouch for."""
+    field the extraction could not vouch for, and so does doubtful evidence."""
     if unusable and inv.netto == 0:
         return f"{UNKLAR}_{UNKLAR}_{UNKLAR}{inv.source_path.suffix.lower() or '.pdf'}"
-    return (f"{vendor_part(inv.vendor_name)}_{number_part(inv.invoice_number)}_{date_part(inv.invoice_date)}"
-            f"{inv.source_path.suffix.lower() or '.pdf'}")
+    vendor = UNKLAR if _doubtful(inv, "vendor_name") else vendor_part(inv.vendor_name)
+    number = UNKLAR if _doubtful(inv, "invoice_number") else number_part(inv.invoice_number)
+    when = UNKLAR if _doubtful(inv, "invoice_date") else date_part(inv.invoice_date)
+    return f"{vendor}_{number}_{when}{inv.source_path.suffix.lower() or '.pdf'}"
 
 
 @dataclass
@@ -86,7 +96,9 @@ def plan_renames(invoices: list[InvoiceDocument], unusable: set[Path] | None = N
         name = target_name(inv, unusable=inv.source_path in unusable)
         notes = []
         if UNKLAR in name:
-            notes.append("Feld nicht lesbar → UNKLAR, Dateiname von Hand prüfen")
+            doubtful = [f for f in ("vendor_name", "invoice_number", "invoice_date") if _doubtful(inv, f)]
+            notes.append("Feld nicht belegt → UNKLAR, Dateiname von Hand prüfen"
+                         + (f" ({', '.join(doubtful)})" if doubtful else ""))
         if inv.vendor_from_filename:
             notes.append("Rechnungssteller aus dem alten Dateinamen (Briefkopf nicht lesbar)")
         key = name.lower()
